@@ -26,6 +26,7 @@ import { CHOOSABLE_ENGINES, readEnginePref, writeEnginePref } from "@/lib/search
 import { THEMES, applyTheme, readTheme } from "@/lib/themes"
 import {
   DEFAULT_PROXY_SERVER,
+  getConfiguredServer,
   getDetectedBackend,
   getProxyServer,
   getSavedProxyServer,
@@ -139,6 +140,7 @@ export function SettingsDialog({ open, onOpenChange, onProxyChanged, notify }: S
 
   const proxyProblem = proxyInput.trim() ? proxyServerProblem(proxyInput.trim()) : null
   const detected = getDetectedBackend()
+  const configured = getConfiguredServer()
   const saved = getSavedProxyServer()
 
   const updateCloak = (patch: Partial<CloakSettings>) => {
@@ -210,7 +212,7 @@ export function SettingsDialog({ open, onOpenChange, onProxyChanged, notify }: S
               <input
                 value={proxyInput}
                 onChange={(e) => setProxyInput(e.target.value)}
-                placeholder={detected ?? DEFAULT_PROXY_SERVER}
+                placeholder={detected ?? configured ?? DEFAULT_PROXY_SERVER}
                 className={inputClass}
                 spellCheck={false}
                 autoComplete="off"
@@ -225,7 +227,9 @@ export function SettingsDialog({ open, onOpenChange, onProxyChanged, notify }: S
                   ? `Using ${proxyKind(saved) === "bare" ? "the Bare server" : "the Wisp server"} you chose.`
                   : detected
                     ? "Automatic: this site's own backend."
-                    : "Automatic: Mercury Workshop's public demo server, which is rate-limited.")}
+                    : configured
+                      ? `Automatic: this site's server (${configured}).`
+                      : "Automatic: Mercury Workshop's public demo server, which is rate-limited.")}
               {saved && !proxyProblem && (
                 <button type="button" className="ml-1 text-primary underline-offset-2 hover:underline" onClick={() => void saveProxy(null)}>
                   Back to automatic

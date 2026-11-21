@@ -112,9 +112,39 @@ export function getDetectedBackend(): string | null {
   return detectedBackend
 }
 
-/** The server Devon proxies through: the chosen one, else this site's own backend, else the public demo */
+/**
+ * The default proxy server this deployment names in public/devon-config.json
+ * (e.g. its own server on Render), for everyone who hasn't picked one
+ */
+let configuredServer: string | null = null
+
+export function getConfiguredServer(): string | null {
+  return configuredServer
+}
+
+/**
+ * The server Devon proxies through: the one chosen in Settings, else this
+ * site's own backend, else the one this deployment names, else the public demo
+ */
 export function getProxyServer(): string {
-  return getSavedProxyServer() ?? detectedBackend ?? DEFAULT_PROXY_SERVER
+  return getSavedProxyServer() ?? detectedBackend ?? configuredServer ?? DEFAULT_PROXY_SERVER
+}
+
+/**
+ * Free hosts (Render) put an idle server to sleep and take up to a minute to
+ * wake it. Knocking as soon as Devon starts gets that going before the first
+ * page needs it.
+ */
+function wake(server: string) {
+  if (server === DEFAULT_PROXY_SERVER) return
+  try {
+    const url = new URL(server)
+    url.protocol = url.protocol === "wss:" || url.protocol === "https:" ? "https:" : "http:"
+    url.pathname = "/devon-backend.json"
+    void fetch(url.href, { mode: "no-cors", cache: "no-store" }).catch(() => {})
+  } catch {
+    // not a URL
+  }
 }
 
 /** Saves the proxy server (null or empty = automatic) and switches to it. Throws if it can't be used. */
@@ -129,7 +159,22 @@ export async function setProxyServer(value: string | null): Promise<void> {
   } catch {
     // storage blocked: still switch for this visit
   }
+  wake(getProxyServer())
   if (connection) await useTransport(connection)
+}
+
+/** public/devon-config.json: { "proxyServer": "wss://…/wisp/" } (or null for none) */
+async function readSiteConfig(): Promise<void> {
+  try {
+    const res = await fetch(withBasePath("/devon-config.json"), { cache: "no-store", signal: AbortSignal.timeout(2500) })
+    if (!res.ok) return
+    const config = (await res.json()) as { proxyServer?: unknown }
+    if (typeof config.proxyServer === "string" && proxyKind(config.proxyServer) && !proxyServerProblem(config.proxyServer)) {
+      configuredServer = config.proxyServer
+    }
+  } catch {
+    // no config: the defaults stand
+  }
 }
 
 async function detectBackend(): Promise<void> {
@@ -275,7 +320,9 @@ async function start(): Promise<void> {
   const [registration] = await Promise.all([
     navigator.serviceWorker.register(SW_URL, { scope: UV_PREFIX, updateViaCache: "none" }),
     detectBackend(),
+    readSiteConfig(),
   ])
+  wake(getProxyServer())
   await activated(registration)
   // Also answers the service worker when it asks the page for a port to the
   // bare-mux worker, so this connection has to stay alive for the visit.

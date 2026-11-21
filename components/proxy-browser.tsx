@@ -560,6 +560,13 @@ export function ProxyBrowser() {
     }
   }, [])
 
+  // Start the proxy right away rather than on the first page: a sleeping
+  // proxy server (Render's free plan) starts waking up, and the first page
+  // doesn't wait for the service worker. Failures show on that first page.
+  useEffect(() => {
+    ensureUv().catch(() => {})
+  }, [])
+
   // Cloaking (lib/cloak.ts, from Abyss-Web): the tab cloak, the panic key,
   // and reopening in about:blank on each visit if that's switched on
   useEffect(() => {

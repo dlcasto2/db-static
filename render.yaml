@@ -1,10 +1,22 @@
-# One-click deploy of Devon with its own proxy backend on Render (adapted
-# from Abyss-Web's render.yaml). Render's free plan supports the WebSockets
-# the Wisp server needs.
+# Your own Devon proxy server on Render's free plan, deployed with the
+# "Deploy to Render" button in README.md. It runs only the proxy backend in
+# server/ — Bare at /bare/ and Wisp at /wisp/ — on Render's Node runtime, which
+# builds in about a minute and fits the free plan's 512 MB. Devon itself stays
+# on GitHub Pages and uses this server once it's set as the proxy server.
+#
+# (server/Dockerfile still builds Devon and the backend into one image, for
+# hosts with more memory than Render's free plan.)
 services:
   - type: web
-    name: devon
-    runtime: docker
+    name: devon-proxy
+    runtime: node
     plan: free
-    dockerfilePath: ./server/Dockerfile
-    dockerContext: .
+    rootDir: server
+    buildCommand: npm ci --omit=dev
+    # npm start passes --max-http-header-size, which big sites (YouTube) need
+    startCommand: npm start
+    healthCheckPath: /devon-backend.json
+    autoDeployTrigger: commit
+    envVars:
+      - key: NODE_VERSION
+        value: "22"

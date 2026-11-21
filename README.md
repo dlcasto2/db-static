@@ -105,6 +105,30 @@ viewer's. youtubei.js is loaded only when the app is opened.
 Downloads depend on YouTube accepting the proxy server's IP. The public demo
 server is shared and rate-limited; your own backend (below) does better.
 
+## Your own proxy server on Render
+
+[![Deploy to Render](https://render.com/images/deploy-to-render-button.svg)](https://render.com/deploy?repo=https://github.com/dlcasto2/db-static)
+
+The button deploys `server/` (below) on Render's free plan, from `render.yaml`:
+
+1. Click it, sign in to Render (with GitHub is quickest), and click **Apply**
+   / **Deploy Blueprint**. The first deploy takes a minute or two.
+2. Render names the service `devon-proxy` and gives it an address like
+   `https://devon-proxy-abcd.onrender.com`. Opening it shows "Devon proxy
+   backend".
+3. Point Devon at it, either:
+   - just in your browser: ⋮ → Settings → Proxy server →
+     `wss://devon-proxy-abcd.onrender.com/wisp/`, or
+   - for everyone using this site: put it in `public/devon-config.json` —
+     `{ "proxyServer": "wss://devon-proxy-abcd.onrender.com/wisp/" }` — and
+     push. A server chosen in Settings still wins.
+
+The free plan puts the server to sleep after about 15 minutes without use;
+the next visit wakes it, which takes up to a minute. Devon knocks on it as soon
+as it opens, so it's usually awake by the first page. Render's addresses are
+datacenter IPs: YouTube may still ask them to sign in, in which case the
+YouTube app's cookie box is the way through.
+
 ## The proxy backend (`server/`)
 
 Abyss-Web's server, ported: a Node server with the same Bare server at
@@ -135,9 +159,10 @@ docker build -f server/Dockerfile -t devon .
 docker run -p 8080:8080 devon
 ```
 
-`render.yaml` deploys that image on [Render](https://render.com) (its free plan
-supports WebSockets) — create a Blueprint from this repo. Vercel can't host it:
-it has no WebSockets for the Wisp server.
+That image needs more memory to build than Render's free plan has, so
+`render.yaml` runs just the server on Render's Node runtime instead. Vercel and
+serverless hosts like wawesome can't run it: they have no WebSockets for the
+Wisp server, or won't connect to arbitrary sites.
 
 ## Ported from Abyss-Web
 
