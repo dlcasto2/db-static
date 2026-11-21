@@ -477,7 +477,24 @@ function ErrorCard({ message, onRetry }: { message: string; onRetry: () => void 
   )
 }
 
-function DownloadUnavailableCard({ message, onRetry }: { message: string; onRetry: () => void }) {
+/** What each YouTube client answered, so a refusal says more than one catch-all sentence */
+function ErrorDetails({ details }: { details?: string[] }) {
+  if (!details?.length) return null
+  return (
+    <details className="mt-2 rounded-lg bg-white/[0.03] ring-1 ring-border">
+      <summary className="cursor-pointer px-3 py-1.5 text-xs text-muted-foreground hover:text-foreground">
+        What YouTube said
+      </summary>
+      <ul className="space-y-1 px-3 pb-2 font-mono text-[11px] break-words text-muted-foreground">
+        {details.map((d, i) => (
+          <li key={i}>{d}</li>
+        ))}
+      </ul>
+    </details>
+  )
+}
+
+function DownloadUnavailableCard({ message, details, onRetry }: { message: string; details?: string[]; onRetry: () => void }) {
   const [open, setOpen] = useState(false)
   return (
     <div className="mt-4 rounded-2xl bg-toolbar p-5 text-sm ring-1 ring-border">
@@ -486,6 +503,7 @@ function DownloadUnavailableCard({ message, onRetry }: { message: string; onRetr
         <div className="min-w-0">
           <p className="font-medium">Downloads are unavailable through this proxy server</p>
           <p className="mt-1 break-words text-muted-foreground">{message}</p>
+          <ErrorDetails details={details} />
           <p className="mt-2 text-muted-foreground">
             You can still try watching above: “Through Devon” loads the youtube-nocookie.com player through Devon&apos;s
             proxy, and “Direct” loads it from your own connection. Neither gives Devon a file to download.
@@ -967,6 +985,7 @@ function WatchView({
   const [video, setVideo] = useState<YTVideo | null>(null)
   const [error, setError] = useState("")
   const [errorCode, setErrorCode] = useState("")
+  const [errorDetails, setErrorDetails] = useState<string[] | undefined>()
   const [attempt, setAttempt] = useState(0)
   const [tab, setTab] = useState<"video" | "audio">("video")
 
@@ -974,6 +993,7 @@ function WatchView({
     const controller = new AbortController()
     setError("")
     setErrorCode("")
+    setErrorDetails(undefined)
     setVideo(null)
     getVideo(id, controller.signal)
       .then((v) => {
@@ -984,6 +1004,7 @@ function WatchView({
         if (controller.signal.aborted) return
         setError(e.message)
         setErrorCode(e.code || "")
+        setErrorDetails(Array.isArray(e.details) ? e.details : undefined)
       })
     return () => controller.abort()
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -1009,7 +1030,7 @@ function WatchView({
           {error && errorCode === "network-unreachable" ? (
             <NetworkUnreachableCard message={error} onRetry={() => setAttempt((n) => n + 1)} />
           ) : error && (errorCode === "bot-check" || errorCode === "stream-unavailable") ? (
-            <DownloadUnavailableCard message={error} onRetry={() => setAttempt((n) => n + 1)} />
+            <DownloadUnavailableCard message={error} details={errorDetails} onRetry={() => setAttempt((n) => n + 1)} />
           ) : error ? (
             <ErrorCard message={error} onRetry={() => setAttempt((n) => n + 1)} />
           ) : video ? (
