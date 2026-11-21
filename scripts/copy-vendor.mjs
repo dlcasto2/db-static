@@ -56,6 +56,9 @@ try {
   mkdirSync(bareMuxOut, { recursive: true })
   copyFileSync(join(bareMuxDist, "worker.js"), join(bareMuxOut, "worker.js"))
   copyFileSync(join(bareMuxDist, "worker.js.map"), join(bareMuxOut, "worker.js.map"))
+  // Its UMD build (window.BareMux / self.BareMux), for Devon's own service
+  // worker (public/devon-sw.js), which loads it with importScripts
+  copyFileSync(join(bareMuxDist, "index.js"), join(bareMuxOut, "index.js"))
   console.log("copy-vendor: @mercuryworkshop/bare-mux worker -> public/baremux/")
 
   // The ES module build, saved as .js rather than .mjs: the bare-mux worker

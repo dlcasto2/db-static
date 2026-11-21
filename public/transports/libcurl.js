@@ -14,8 +14,23 @@ import { libcurl } from "../libcurl/libcurl.js"
 
 const WASM_URL = new URL("../libcurl/libcurl.wasm", import.meta.url).href
 
+// bare-mux's worker calls init() on the first request it gets, and again on
+// every request that arrives before that finishes; libcurl.js's load_wasm()
+// isn't safe to call while it's loading (a second call instantiates the
+// WebAssembly again and aborts with "Assertion failed", killing the proxy for
+// the rest of the visit). So it's loaded once, and everyone waits on that.
+let loading = null
+const loadLibcurl = () =>
+  (loading ??= Promise.resolve(libcurl.load_wasm(WASM_URL)).catch((error) => {
+    loading = null // a failed download can be retried
+    throw error
+  }))
+
 export default class LibcurlTransport {
   ready = false
+
+  /** @type {Promise<void> | null} */
+  initializing = null
 
   constructor(options) {
     let wisp = String(options?.wisp ?? "")
@@ -26,13 +41,19 @@ export default class LibcurlTransport {
     this.session = null
   }
 
-  async init() {
-    await libcurl.load_wasm(WASM_URL)
-    // Only new connections use a changed server, and each transport gets a
-    // new session, so switching servers in Settings takes effect at once
-    libcurl.set_websocket(this.wisp)
-    this.session = new libcurl.HTTPSession()
-    this.ready = true
+  init() {
+    this.initializing ??= (async () => {
+      await loadLibcurl()
+      // Only new connections use a changed server, and each transport gets a
+      // new session, so switching servers in Settings takes effect at once
+      libcurl.set_websocket(this.wisp)
+      this.session = new libcurl.HTTPSession()
+      this.ready = true
+    })().catch((error) => {
+      this.initializing = null
+      throw error
+    })
+    return this.initializing
   }
 
   async meta() {}

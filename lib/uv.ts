@@ -297,6 +297,27 @@ export function ensureUv(): Promise<void> {
   return ready
 }
 
+let bareClient: import("@mercuryworkshop/bare-mux").BareClient | null = null
+
+/**
+ * fetch() through Devon's proxy, for Devon's own code that needs a site's data
+ * rather than a page to show (the YouTube app). Same transport and server as
+ * the pages; no CORS, and request headers go as given — including ones a
+ * browser's fetch() won't send, like Cookie and Origin, when they're passed as
+ * init.headers.
+ */
+export async function proxyFetch(input: RequestInfo | URL, init?: RequestInit): Promise<Response> {
+  await ensureUv()
+  if (!bareClient) {
+    const { BareClient } = await import("@mercuryworkshop/bare-mux")
+    bareClient = new BareClient(BAREMUX_WORKER)
+  }
+  init?.signal?.throwIfAborted()
+  // BareClient also takes a Request (it builds one from whatever it's given),
+  // though its types only say string | URL
+  return bareClient.fetch((input instanceof URL ? input.href : input) as string, init)
+}
+
 /** Forgets what proxied sites stored: Ultraviolet keeps their cookies in this IndexedDB database. */
 export function clearUvData() {
   try {

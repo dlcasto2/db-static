@@ -19,10 +19,10 @@ What that leaves:
   [Abyss-Web](https://github.com/AbyssServices/Abyss-Web) — tab cloak,
   about:blank cloak, panic key, themes and a search engine picker (see below).
 - `/games`.
-- `/youtube` — the page renders, but downloading doesn't work (that needs
-  the server route this repo doesn't have).
+- The YouTube app (devon://apps/youtube) — search, watching and downloads,
+  with no server of its own (see below).
 
-What doesn't work here: YouTube downloads, page-safety checks, Devon AI,
+What doesn't work here: page-safety checks, Devon AI,
 sign-in/sync, and the extras that hook into db-v2's server-rewritten pages
 (extensions/userscripts, saving pages, "ask about this page"). For
 the real thing, see [dlcasto2/db-v2](https://github.com/dlcasto2/db-v2).
@@ -74,6 +74,36 @@ Ultraviolet and the Epoxy transport are AGPL-3.0 (per their LICENSE files),
 libcurl.js LGPL-3.0;
 this repo being public keeps the source of what it serves available, as that
 license asks.
+
+## The YouTube app without a server
+
+db-v2's YouTube app calls its server (`/api/youtube/…`), which runs
+[youtubei.js](https://github.com/LuanRT/YouTube.js). Here the same code runs in
+the page instead (`lib/youtube-local.ts`, ported from db-v2's
+`lib/youtube-server.ts`), and every request it makes goes through the proxy
+(`proxyFetch` in `lib/uv.ts`) — so YouTube sees the proxy server's IP, not the
+viewer's. youtubei.js is loaded only when the app is opened.
+
+- **Search and video info**: youtubei.js, as on db-v2's server, trying the same
+  YouTube clients in the same order until one gives streams that download.
+  YouTube's player code (needed to unlock stream URLs) runs in a sandboxed
+  iframe with its own opaque origin, the browser's version of the `vm`
+  sandbox db-v2 uses.
+- **Video bytes and thumbnails**: YouTube ties a stream URL to the IP that
+  asked for it, so the bytes have to come through the same proxy. A second
+  service worker, `public/devon-sw.js`, scoped to all of Devon but answering
+  only `<base>/yt/stream` and `<base>/yt/thumb`, serves them: it asks the page
+  for the stream URL, then fetches it through the proxy in 3 MB slices and
+  honors Range requests, like db-v2's `/api/youtube/stream`. So `<video>` and
+  the downloader work unchanged.
+- **The cookie box** keeps the cookie in this browser (localStorage) and
+  youtubei.js sends it to YouTube through the proxy. With a Wisp server, TLS
+  is end to end, so the proxy server never sees it; a Bare server would.
+- **"Through Devon" player**: the youtube-nocookie.com embed, loaded through
+  Ultraviolet.
+
+Downloads depend on YouTube accepting the proxy server's IP. The public demo
+server is shared and rate-limited; your own backend (below) does better.
 
 ## The proxy backend (`server/`)
 

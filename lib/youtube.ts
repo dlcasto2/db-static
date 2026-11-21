@@ -98,35 +98,49 @@ export interface YTVideo {
   formats: YTFormat[]
 }
 
-async function getJSON<T>(url: string, signal?: AbortSignal): Promise<T> {
-  const res = await fetch(url, { signal })
-  const data = await res.json().catch(() => ({}))
-  if (!res.ok) throw Object.assign(new Error(data?.error || `Request failed (${res.status})`), { code: data?.code as string | undefined })
-  return data as T
+// This static build has no /api/youtube server: YouTube is reached from the
+// page itself, through Devon's proxy (lib/youtube-local.ts, loaded on first
+// use so youtubei.js only downloads when the app is opened), and video bytes
+// and thumbnails come from Devon's service worker (public/devon-sw.js).
+const local = () => import("@/lib/youtube-local")
+
+/** Resolves with `work`, or rejects as soon as `signal` aborts */
+function abortable<T>(work: Promise<T>, signal?: AbortSignal): Promise<T> {
+  if (!signal) return work
+  if (signal.aborted) return Promise.reject(new DOMException("Aborted", "AbortError"))
+  return new Promise<T>((resolve, reject) => {
+    const onAbort = () => reject(new DOMException("Aborted", "AbortError"))
+    signal.addEventListener("abort", onAbort, { once: true })
+    work.then(resolve, reject).finally(() => signal.removeEventListener("abort", onAbort))
+  })
+}
+
+/** Starts the proxy and Devon's service worker early, so the first search and thumbnails don't wait for them */
+export function warmUpYouTube() {
+  local()
+    .then((yt) => yt.ensureReady())
+    .catch(() => {})
 }
 
 export const searchYouTube = (q: string, signal?: AbortSignal) =>
-  getJSON<{ items: YTSearchItem[]; next: string | null }>(`/api/youtube/search?q=${encodeURIComponent(q)}`, signal)
+  abortable(local().then(async (yt) => (await yt.ensureReady(), yt.search(q.slice(0, 200)))), signal)
 
 export const searchYouTubeMore = (next: string, signal?: AbortSignal) =>
-  getJSON<{ items: YTSearchItem[]; next: string | null }>(`/api/youtube/search?next=${encodeURIComponent(next)}`, signal)
+  abortable(local().then((yt) => yt.searchMore(next)), signal)
 
 export const youTubeSuggestions = (q: string, signal?: AbortSignal) =>
-  getJSON<{ suggestions: string[] }>(`/api/youtube/search?suggest=${encodeURIComponent(q)}`, signal).then(
-    (d) => d.suggestions,
-  )
+  abortable(local().then((yt) => yt.suggestions(q.slice(0, 200))), signal).then((s) => s.slice(0, 8))
 
-export const getVideo = (id: string, signal?: AbortSignal) =>
-  getJSON<YTVideo>(`/api/youtube/info?id=${encodeURIComponent(id)}`, signal)
+export const getVideo = (id: string, signal?: AbortSignal) => abortable(local().then((yt) => yt.videoInfo(id)), signal)
 
 /** Thumbnails go through Devon's proxy, so they show even where i.ytimg.com is blocked */
 export function thumbnailUrl(id: string, size: "mq" | "hq" | "maxres" = "mq") {
   const file = size === "maxres" ? "maxresdefault" : `${size}default`
-  return `/api/proxy?url=${encodeURIComponent(`https://i.ytimg.com/vi/${id}/${file}.jpg`)}&raw=1`
+  return withBasePath(`/yt/thumb?id=${id}&f=${file}`)
 }
 
 export function streamUrl(video: Pick<YTVideo, "id" | "client">, itag: number) {
-  return `/api/youtube/stream?id=${video.id}&itag=${itag}&c=${encodeURIComponent(video.client)}`
+  return withBasePath(`/yt/stream?id=${video.id}&itag=${itag}&c=${encodeURIComponent(video.client)}`)
 }
 
 // ---------------------------------------------------------------------------
@@ -569,7 +583,7 @@ export function loadFFmpeg(): Promise<FFmpegLike> {
 }
 
 // ---------------------------------------------------------------------------
-// Cookie box (a YouTube cookie saved in this browser, sent only to /api/youtube)
+// Cookie box (a YouTube cookie saved in this browser, sent only to YouTube)
 // ---------------------------------------------------------------------------
 
 export interface CookieStatus {
@@ -578,19 +592,66 @@ export interface CookieStatus {
   hasSID?: boolean
 }
 
-export const getCookieStatus = () => getJSON<CookieStatus>("/api/youtube/cookie")
+const COOKIE_KEY = "devon-yt-cookie"
 
+function describeCookie(cookie: string): CookieStatus {
+  return cookie
+    ? { set: true, cookies: cookie.split(";").filter((c) => c.includes("=")).length, hasSID: /(^|;\s*)(__Secure-3PSID|SID)=/.test(cookie) }
+    : { set: false }
+}
+
+/** Cleans up pasted cookie text: a Cookie header value, a cookies.txt file, or a cookie extension's JSON export */
+function normalizeCookie(raw: string): string {
+  const text = raw.trim()
+  if (text.startsWith("[")) {
+    try {
+      const list = JSON.parse(text) as { name?: string; value?: string; domain?: string }[]
+      return list
+        .filter((c) => c.name && typeof c.value === "string" && /youtube\.com$/i.test(c.domain ?? "youtube.com"))
+        .map((c) => `${c.name}=${c.value}`)
+        .join("; ")
+    } catch {
+      // not JSON after all
+    }
+  }
+  if (/^#|\t/m.test(text)) {
+    // Netscape cookies.txt: domain, flag, path, secure, expiry, name, value (tab separated)
+    return text
+      .split(/\r?\n/)
+      .map((line) => line.replace(/^#HttpOnly_/, "").split("\t"))
+      .filter((f) => f.length >= 7 && !f[0].startsWith("#") && /youtube\.com$/i.test(f[0]))
+      .map((f) => `${f[5]}=${f[6]}`)
+      .join("; ")
+  }
+  return text.replace(/^cookie:\s*/i, "").replace(/[\r\n]+/g, "")
+}
+
+export async function getCookieStatus(): Promise<CookieStatus> {
+  try {
+    return describeCookie(localStorage.getItem(COOKIE_KEY) ?? "")
+  } catch {
+    return { set: false }
+  }
+}
+
+/** Saved in this browser only; youtubei.js sends it to YouTube through the proxy */
 export async function saveCookie(cookie: string): Promise<CookieStatus> {
-  const res = await fetch("/api/youtube/cookie", {
-    method: "POST",
-    headers: { "content-type": "application/json" },
-    body: JSON.stringify({ cookie }),
-  })
-  const data = await res.json().catch(() => ({}))
-  if (!res.ok) throw new Error(data?.error || `Couldn't save it (${res.status})`)
-  return data as CookieStatus
+  const value = normalizeCookie(cookie)
+  if (!value || !value.includes("=")) throw new Error("That doesn't look like a cookie. Paste the Cookie header or a cookies.txt file.")
+  try {
+    localStorage.setItem(COOKIE_KEY, value)
+  } catch {
+    throw new Error("This browser won't let Devon save it (storage is blocked).")
+  }
+  ;(await local()).resetSession()
+  return describeCookie(value)
 }
 
 export async function removeCookie(): Promise<void> {
-  await fetch("/api/youtube/cookie", { method: "DELETE" })
+  try {
+    localStorage.removeItem(COOKIE_KEY)
+  } catch {
+    // storage blocked
+  }
+  ;(await local()).resetSession()
 }

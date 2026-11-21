@@ -44,8 +44,10 @@ import {
   streamUrl,
   thumbnailUrl,
   videoIdFromUrl,
+  warmUpYouTube,
   youTubeSuggestions,
 } from "@/lib/youtube"
+import { ensureUv, uvUrl } from "@/lib/uv"
 import { cn } from "@/lib/utils"
 
 interface YouTubePageProps {
@@ -57,6 +59,8 @@ interface YouTubePageProps {
 
 /** Devon's YouTube page: search YouTube, watch in Devon and download video or audio */
 export function YouTubePage({ route, onNavigate, onTitle }: YouTubePageProps) {
+  // Starts the proxy and Devon's service worker before they're first needed
+  useEffect(() => warmUpYouTube(), [])
   return route.view === "watch" ? (
     <WatchView key={route.id} id={route.id} onNavigate={onNavigate} onTitle={onTitle} />
   ) : (
@@ -480,7 +484,7 @@ function DownloadUnavailableCard({ message, onRetry }: { message: string; onRetr
       <div className="flex items-start gap-3">
         <AlertTriangle className="mt-0.5 size-5 flex-shrink-0 text-amber-400" />
         <div className="min-w-0">
-          <p className="font-medium">Downloads are unavailable from this server</p>
+          <p className="font-medium">Downloads are unavailable through this proxy server</p>
           <p className="mt-1 break-words text-muted-foreground">{message}</p>
           <p className="mt-2 text-muted-foreground">
             You can still try watching above: “Through Devon” loads the youtube-nocookie.com player through Devon&apos;s
@@ -518,15 +522,12 @@ function NetworkUnreachableCard({ message, onRetry }: { message: string; onRetry
       <div className="flex items-start gap-3">
         <WifiOff className="mt-0.5 size-5 flex-shrink-0 text-amber-400" />
         <div className="min-w-0">
-          <p className="font-medium">This server can&apos;t reach YouTube&apos;s video servers</p>
+          <p className="font-medium">Devon&apos;s proxy can&apos;t reach YouTube</p>
           <p className="mt-1 break-words text-muted-foreground">{message}</p>
           <p className="mt-2 text-muted-foreground">
-            That&apos;s a network problem on this Devon deployment, not something to fix from the page — a cookie,
-            a different client or a different video won&apos;t help, since every one hits the same unreachable
-            address. “Direct” playback above still works (it&apos;s your own connection, not this server&apos;s); so
-            does “Through Devon” unless this server can&apos;t reach Google&apos;s other domains either. Downloading
-            needs the host itself to have outbound access to <span className="font-mono">*.googlevideo.com</span>,
-            or a working Invidious relay (<span className="font-mono">DEVON_INVIDIOUS</span>).
+            A cookie, a different client or a different video won&apos;t help: every one goes through the same proxy
+            server. “Direct” playback above still works (it&apos;s your own connection). To download, pick another
+            proxy server under ⋮ → Settings → Proxy server.
           </p>
           <Button size="sm" variant="secondary" className="mt-3 rounded-full" onClick={onRetry}>
             <RotateCw /> Try again
@@ -655,8 +656,8 @@ function CookieDialog({
           </DialogTitle>
           <DialogDescription>
             YouTube blocks downloads from cloud servers unless they come from a signed-in account. Paste that account&apos;s
-            cookie here. It&apos;s stored only in this browser, can&apos;t be read by web pages, and is sent only to this
-            Devon server&apos;s YouTube downloader.
+            cookie here. It&apos;s stored only in this browser and sent only to YouTube, through Devon&apos;s proxy
+            server.
           </DialogDescription>
         </DialogHeader>
 
@@ -851,17 +852,25 @@ const embedUrl = (id: string) => `https://www.youtube-nocookie.com/embed/${id}?a
 
 /**
  * Devon mode never makes the viewer's browser talk to YouTube:
- *  - if the download server can stream the video, it plays in a <video> fed by
- *    /api/youtube/stream;
- *  - otherwise the youtube-nocookie.com player itself is loaded through Devon's
- *    proxy (/api/proxy), so its page, scripts and video requests all go through
- *    this server.
+ *  - if the video's streams could be unlocked, it plays in a <video> fed by
+ *    Devon's service worker (<base>/yt/stream, public/devon-sw.js);
+ *  - otherwise the youtube-nocookie.com player itself is loaded through
+ *    Ultraviolet, so its page, scripts and video requests all go through
+ *    Devon's proxy.
  * Direct mode loads youtube-nocookie.com straight from the viewer's connection.
  */
 function DevonPlayer({ id, video }: { id: string; video: YTVideo | null }) {
   const [mode, setModeState] = useState<PlayerMode>("devon")
   const [nativeFailed, setNativeFailed] = useState(false)
+  /** Ultraviolet is running, so the proxied player can load (null = starting, string = why it couldn't) */
+  const [uvState, setUvState] = useState<true | string | null>(null)
   useEffect(() => setModeState(readPlayerMode()), [])
+  useEffect(() => {
+    ensureUv().then(
+      () => setUvState(true),
+      (error) => setUvState(error instanceof Error ? error.message : String(error)),
+    )
+  }, [])
   useEffect(() => setNativeFailed(false), [id])
 
   const setMode = (m: PlayerMode) => {
@@ -876,14 +885,10 @@ function DevonPlayer({ id, video }: { id: string; video: YTVideo | null }) {
   const preview = video ? previewFormat(video) : undefined
   const native = mode === "devon" && video && preview && !nativeFailed
   // YouTube's embed refuses to start without knowing which site embeds it
-  // (Error 153 "Video player configuration error"). Through the proxy, the
-  // upstream Referer only exists if we pass one as ref=, so name this Devon site.
+  // (Error 153 "Video player configuration error"), so name this Devon site.
   const site = typeof window !== "undefined" ? `${window.location.origin}/` : ""
   const proxiedEmbed = `${embedUrl(id)}${site ? `&origin=${encodeURIComponent(site.slice(0, -1))}&widget_referrer=${encodeURIComponent(site)}` : ""}`
-  const src =
-    mode === "direct"
-      ? embedUrl(id)
-      : `/api/proxy?url=${encodeURIComponent(proxiedEmbed)}${site ? `&ref=${encodeURIComponent(site)}` : ""}`
+  const src = mode === "direct" ? embedUrl(id) : uvState === true ? uvUrl(proxiedEmbed) : ""
 
   return (
     <div>
@@ -901,6 +906,10 @@ function DevonPlayer({ id, video }: { id: string; video: YTVideo | null }) {
           />
         ) : mode === "direct" ? (
           <OfficialYouTubePlayer key={id} id={id} onError={() => setModeState("devon")} />
+        ) : !src ? (
+          <div className="grid size-full place-items-center p-6 text-center text-sm text-muted-foreground">
+            {typeof uvState === "string" ? uvState : <Loader2 className="size-6 animate-spin" />}
+          </div>
         ) : (
           <iframe
             key={src}
@@ -938,7 +947,7 @@ function DevonPlayer({ id, video }: { id: string; video: YTVideo | null }) {
           {mode === "direct"
             ? "youtube-nocookie.com from your own connection (if it shows a 403, your network blocks it: use Through Devon)"
             : native
-              ? "Streaming from this Devon server"
+              ? "Streaming through Devon's proxy"
               : "youtube-nocookie.com loaded through Devon's proxy"}
         </span>
       </div>
