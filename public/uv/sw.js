@@ -43,7 +43,8 @@ const MAX_ENTRIES = 400
 const MAX_AGE_S = 30 * 24 * 60 * 60
 /** Not worth keeping what goes stale within the hour */
 const MIN_AGE_S = 60 * 60
-const DESTINATIONS = new Set(["script", "worker", "sharedworker", "style", "font", "image"])
+// Not "worker": Ultraviolet writes the page's cookies and referrer of the moment into those
+const DESTINATIONS = new Set(["script", "sharedworker", "style", "font", "image"])
 const EXPIRES = "x-devon-cache-expires"
 
 function cacheable(request) {
