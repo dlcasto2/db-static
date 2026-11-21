@@ -9,8 +9,8 @@
 //
 // NEXT_PUBLIC_BASE_PATH is the one kind of env var Next inlines into
 // client-side code too, so it's readable here regardless of which component
-// imports it. .github/workflows/pages.yml sets it to match next.config.mjs's
-// basePath; both are empty for a plain local `next build`, so neither breaks.
+// imports it. next.config.mjs sets it (via `env`) to the same value as its
+// basePath: "/db-static" for `next build`, empty for `next dev`.
 export const BASE_PATH = process.env.NEXT_PUBLIC_BASE_PATH ?? ""
 
 export function withBasePath(path: string): string {

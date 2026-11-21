@@ -51,9 +51,10 @@ pnpm install --frozen-lockfile   # fetches @next/swc (see above)
 pnpm build
 ```
 
-Output goes to `out/` — plain HTML/CSS/JS, no server needed to serve it. A
-plain local build like this is meant to be served from a domain root
-(`npx serve out`, say).
+Output goes to `out/` — plain HTML/CSS/JS, no server needed to serve it.
+Every build expects to be served from `/db-static/` (see below), so to
+preview one locally, serve it under that path rather than at a root.
+`pnpm dev` runs at the root as usual.
 
 ## Deploying
 
@@ -62,17 +63,17 @@ every push to `main` (Pages must be set to deploy from "GitHub Actions" in
 this repo's Settings → Pages, not from a branch).
 
 GitHub Pages serves a project repo from a subpath —
-`https://<user>.github.io/db-static/`, not a domain root — so the build
-needs that subpath as its `basePath`. `next.config.mjs` works it out from
-the `GITHUB_REPOSITORY` variable GitHub Actions always sets, so the workflow
-doesn't pass anything. To override it (an empty value for a custom domain
-served at its root, say), set `NEXT_PUBLIC_BASE_PATH`.
+`https://<user>.github.io/db-static/`, not a domain root — so
+`next.config.mjs` sets `basePath` to `/db-static` for production builds
+(`next build`) and leaves it empty for `next dev`. If the repo is renamed or
+moved to a custom domain, that's the one value to change.
 
 Next only adds that prefix to what it generates itself (its JS/CSS chunks,
 `next/link`, `next/image`). The rest of this codebase, inherited from
 db-v2, hardcodes root-absolute paths like `/icon.svg` and `/games/...`, so
-each of those goes through `withBasePath()` from `lib/base-path.ts`. Any new
-one needs to as well, or it'll 404 on Pages while working fine locally.
+each of those goes through `withBasePath()` from `lib/base-path.ts`, which
+gets the same value via `next.config.mjs`'s `env`. Any new one needs to as
+well, or it'll 404 on Pages while working fine in `pnpm dev`.
 
 ## Why this exists
 
