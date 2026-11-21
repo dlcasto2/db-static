@@ -365,11 +365,20 @@ export async function proxyFetch(input: RequestInfo | URL, init?: RequestInit): 
   return bareClient.fetch((input instanceof URL ? input.href : input) as string, init)
 }
 
-/** Forgets what proxied sites stored: Ultraviolet keeps their cookies in this IndexedDB database. */
+/**
+ * Forgets what proxied sites stored: Ultraviolet keeps their cookies in this
+ * IndexedDB database, and public/uv/sw.js keeps the files it has already
+ * fetched (and rewritten) in Cache Storage under "devon-uv-cache-*".
+ */
 export function clearUvData() {
   try {
     indexedDB.deleteDatabase("__op")
   } catch {
     // best-effort
   }
+  if (typeof caches === "undefined") return
+  caches
+    .keys()
+    .then((names) => Promise.all(names.filter((n) => n.startsWith("devon-uv-cache-")).map((n) => caches.delete(n))))
+    .catch(() => {})
 }
