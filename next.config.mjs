@@ -1,3 +1,11 @@
+// Empty for a plain local build (serves at a domain root); set by
+// .github/workflows/pages.yml to "/db-static" for the GitHub Pages build,
+// since that's served at a subpath. See lib/base-path.ts — every hardcoded
+// "/..." asset reference elsewhere in this codebase needs this same prefix
+// added by hand, since basePath here only rewrites what Next generates
+// itself (next/link, next/image, the _next/static chunks).
+const basePath = process.env.NEXT_PUBLIC_BASE_PATH || ""
+
 /** @type {import('next').NextConfig} */
 const nextConfig = {
   // This repo is a one-purpose fork of dlcasto2/db-v2 (the real Devon
@@ -9,6 +17,7 @@ const nextConfig = {
   // README for what that leaves: the browser UI shell, /games, and the
   // /youtube page (not downloading).
   output: "export",
+  ...(basePath ? { basePath } : {}),
   typescript: {
     ignoreBuildErrors: false,
   },

@@ -1,12 +1,19 @@
 "use client"
 
 import { cn } from "@/lib/utils"
+import { withBasePath } from "@/lib/base-path"
 
 /** The Devon app mark — renders public/icon.svg */
 export function DevonMark({ className, title }: { className?: string; title?: string }) {
   return (
     // eslint-disable-next-line @next/next/no-img-element
-    <img src="/icon.svg" alt={title ?? ""} aria-hidden={title ? undefined : true} className={className} draggable={false} />
+    <img
+      src={withBasePath("/icon.svg")}
+      alt={title ?? ""}
+      aria-hidden={title ? undefined : true}
+      className={className}
+      draggable={false}
+    />
   )
 }
 

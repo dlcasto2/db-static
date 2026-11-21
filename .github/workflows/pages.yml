@@ -41,6 +41,11 @@ jobs:
         run: pnpm install --frozen-lockfile
 
       - name: Build (static export)
+        # This repo is served at a subpath on GitHub Pages
+        # (https://<user>.github.io/db-static/), not a domain root — see
+        # next.config.mjs and lib/base-path.ts for what this env var drives.
+        env:
+          NEXT_PUBLIC_BASE_PATH: /db-static
         run: node_modules/.bin/next build
 
       - uses: actions/upload-pages-artifact@v3

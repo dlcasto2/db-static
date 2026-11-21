@@ -1,6 +1,7 @@
 "use client"
 
 import { GamePlayer } from "@/components/games-page"
+import { withBasePath } from "@/lib/base-path"
 
 /** devon://apps/go-fish — a bundled HTML game, played with the same chrome the Games page uses */
 const GO_FISH_GAME = {
@@ -8,9 +9,9 @@ const GO_FISH_GAME = {
   title: "Go Fish",
   author: "You",
   description: "Collect four of a kind. Every turn ends with a discard, and the discard pile is a second place to fish.",
-  src: "/apps/go-fish/index.html",
-  cover: "/apps/go-fish.svg",
-  icon: "/apps/go-fish.svg",
+  src: withBasePath("/apps/go-fish/index.html"),
+  cover: withBasePath("/apps/go-fish.svg"),
+  icon: withBasePath("/apps/go-fish.svg"),
   size: "<1 MB",
 }
 

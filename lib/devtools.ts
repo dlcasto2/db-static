@@ -11,7 +11,9 @@
  * output and requests are captured too.
  */
 
-const ERUDA_SRC = "/vendor/eruda.js"
+import { withBasePath } from "@/lib/base-path"
+
+const ERUDA_SRC = withBasePath("/vendor/eruda.js")
 const PREF_KEY = "devon-devtools"
 
 interface Eruda {

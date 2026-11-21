@@ -1,6 +1,7 @@
 "use client"
 
 import type React from "react"
+import { withBasePath } from "@/lib/base-path"
 
 import { useState, useEffect, useRef, useCallback } from "react"
 import { Button } from "@/components/ui/button"
@@ -350,7 +351,7 @@ function ProxiedFrame({
       ref={(el) => {
         if (el) frameRef.current = el
       }}
-      src="/devon-frame.html"
+      src={withBasePath("/devon-frame.html")}
       data-devon-page=""
       onLoad={handleLoad}
       className="w-full flex-1 min-h-0 border-0 bg-white"

@@ -1,3 +1,5 @@
+import { withBasePath } from "@/lib/base-path"
+
 /** Games bundled with Devon (served from /public/games) */
 export interface Game {
   id: string
@@ -17,7 +19,7 @@ export interface Game {
 
 export const GAMES_URL = "devon://games"
 
-export const GAMES: Game[] = [
+const GAMES_UNPREFIXED: Game[] = [
   {
     id: "abyssal-transcendence",
     title: "Abyssal Transcendence: Dimensions Demo",
@@ -226,6 +228,16 @@ export const GAMES: Game[] = [
     size: "14 MB",
   },
 ]
+
+// See lib/base-path.ts — on GitHub Pages this whole app is served from a
+// subpath, so every one of the hardcoded root-absolute paths above needs
+// that prefix added.
+export const GAMES: Game[] = GAMES_UNPREFIXED.map((g) => ({
+  ...g,
+  src: withBasePath(g.src),
+  cover: withBasePath(g.cover),
+  icon: withBasePath(g.icon),
+}))
 
 /** devon://games or devon://games/<id> → the game id ("" for the list), else null */
 export function parseGamesUrl(input: string): string | null {

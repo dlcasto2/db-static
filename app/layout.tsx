@@ -1,6 +1,7 @@
 import type React from "react"
 import type { Metadata, Viewport } from "next"
 import { Geist, Geist_Mono } from "next/font/google"
+import { withBasePath } from "@/lib/base-path"
 import "./globals.css"
 
 export const metadata: Metadata = {
@@ -9,13 +10,13 @@ export const metadata: Metadata = {
   applicationName: "Devon Browser",
   icons: {
     icon: [
-      { url: "/favicon.ico", sizes: "any" },
-      { url: "/icon.svg", type: "image/svg+xml" },
-      { url: "/icon-192.png", type: "image/png", sizes: "192x192" },
+      { url: withBasePath("/favicon.ico"), sizes: "any" },
+      { url: withBasePath("/icon.svg"), type: "image/svg+xml" },
+      { url: withBasePath("/icon-192.png"), type: "image/png", sizes: "192x192" },
     ],
-    apple: "/apple-icon.png",
+    apple: withBasePath("/apple-icon.png"),
   },
-  manifest: "/manifest.webmanifest",
+  manifest: withBasePath("/manifest.webmanifest"),
 }
 
 export const viewport: Viewport = {

@@ -4,6 +4,7 @@
  */
 
 import { YOUTUBE_ICON, YOUTUBE_URL } from "@/lib/youtube"
+import { withBasePath } from "@/lib/base-path"
 
 export const APPS_URL = "devon://apps"
 export const AI_URL = "devon://apps/ai"
@@ -11,11 +12,11 @@ export const PROMPT_GEN_URL = "devon://apps/prompt-gen"
 export const GO_FISH_URL = "devon://apps/go-fish"
 export const HTML_LAB_URL = "devon://apps/html-lab"
 
-export const APPS_ICON = "/apps/apps.svg"
-export const AI_ICON = "/apps/devon-ai.svg"
-export const PROMPT_GEN_ICON = "/apps/prompt-gen.svg"
-export const GO_FISH_ICON = "/apps/go-fish.svg"
-export const HTML_LAB_ICON = "/apps/html-lab.svg"
+export const APPS_ICON = withBasePath("/apps/apps.svg")
+export const AI_ICON = withBasePath("/apps/devon-ai.svg")
+export const PROMPT_GEN_ICON = withBasePath("/apps/prompt-gen.svg")
+export const GO_FISH_ICON = withBasePath("/apps/go-fish.svg")
+export const HTML_LAB_ICON = withBasePath("/apps/html-lab.svg")
 
 export type AppId = "ai" | "youtube" | "prompt-gen" | "go-fish" | "html-lab"
 

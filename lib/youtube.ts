@@ -3,9 +3,11 @@
  * options, the slice-by-slice downloader and in-browser merging with ffmpeg.wasm.
  */
 
+import { withBasePath } from "@/lib/base-path"
+
 /** YouTube lives under Apps; the old devon://youtube addresses still open it */
 export const YOUTUBE_URL = "devon://apps/youtube"
-export const YOUTUBE_ICON = "/youtube-icon.svg"
+export const YOUTUBE_ICON = withBasePath("/youtube-icon.svg")
 
 export type YouTubeRoute = { view: "search"; q: string } | { view: "watch"; id: string }
 
@@ -487,7 +489,7 @@ export async function runDownload(
  * (gzipped, in ~3 MB parts; see scripts/copy-vendor.mjs), so it loads on
  * networks that block CDNs. If those files are missing it falls back to a CDN.
  */
-const LOCAL_CORE = "/vendor/ffmpeg-core"
+const LOCAL_CORE = withBasePath("/vendor/ffmpeg-core")
 const CDN_CORE = process.env.NEXT_PUBLIC_FFMPEG_CORE_URL || "https://cdn.jsdelivr.net/npm/@ffmpeg/core@0.12.9/dist/esm"
 
 interface FFmpegLike {
@@ -541,7 +543,7 @@ async function cdnCore(): Promise<{ coreURL: string; wasmURL: string }> {
 export function loadFFmpeg(): Promise<FFmpegLike> {
   if (!ffmpegInstance) {
     ffmpegInstance = (async () => {
-      const path = "/vendor/ffmpeg/index.js"
+      const path = withBasePath("/vendor/ffmpeg/index.js")
       const mod = await import(/* webpackIgnore: true */ /* turbopackIgnore: true */ path)
       const ffmpeg = new mod.FFmpeg() as FFmpegLike
       let urls: { coreURL: string; wasmURL: string }
