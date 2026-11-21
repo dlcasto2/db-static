@@ -13,14 +13,49 @@ removed before this config file was ever written, not worked around in it.
 
 What that leaves:
 - The browser UI shell (tabs, address bar, bookmarks, history, new-tab page).
+- Browsing, through [Ultraviolet](https://github.com/titaniumnetwork-dev/Ultraviolet)
+  instead of db-v2's server proxy (see below).
 - `/games`.
 - `/youtube` — the page renders, but downloading doesn't work (that needs
   the server route this repo doesn't have).
 
-What doesn't work here: the proxy (so browsing itself — the actual point of
-Devon — doesn't function), YouTube downloads, page-safety checks, Devon AI,
-and sign-in/sync. For the real thing, see
-[dlcasto2/db-v2](https://github.com/dlcasto2/db-v2).
+What doesn't work here: YouTube downloads, page-safety checks, Devon AI,
+sign-in/sync, and the extras that hook into db-v2's server-rewritten pages
+(extensions/userscripts, dev tools, saving pages, "ask about this page"). For
+the real thing, see [dlcasto2/db-v2](https://github.com/dlcasto2/db-v2).
+
+## Browsing: Ultraviolet
+
+With no server to fetch pages through, every web page loads through
+Ultraviolet, which proxies in the browser itself:
+
+- `public/uv/sw.js` — a service worker scoped to `/db-static/uv/service/`
+  only, so it never touches Devon's own pages. A page is an iframe pointed at
+  `/db-static/uv/service/<encoded url>`; the worker rewrites it and everything
+  it loads. `lib/uv.ts` registers it, and `components/proxy-browser.tsx` reads
+  each page's real address and title back out of the frame for the address
+  bar, tab and history.
+- [bare-mux](https://github.com/MercuryWorkshop/bare-mux) + the
+  [Epoxy](https://github.com/MercuryWorkshop/epoxy-tls) transport carry the
+  requests. Epoxy does TLS in the browser and tunnels raw TCP through a
+  **Wisp server** — the one part that can't live on GitHub Pages, since it's a
+  WebSocket server.
+
+The Wisp server defaults to Mercury Workshop's public demo,
+`wss://wisp.mercurywork.shop/`, which is rate-limited. Point Devon at your own
+from the ⋮ menu → **Proxy server…** (saved per browser). Any Wisp server works
+on any host that allows WebSockets, e.g.
+[wisp-js](https://github.com/MercuryWorkshop/wisp-js) (`npx wisp-js-server`).
+
+Ultraviolet's prebuilt scripts, the bare-mux worker and the Epoxy transport are
+copied out of `node_modules` into `public/` by `scripts/copy-vendor.mjs` on
+every install (and gitignored); `public/uv/sw.js` and `public/uv/uv.config.js`
+are the hand-written parts. `uv.config.js` works out the base path from its own
+URL, so the same files work at `/db-static/` and at the root in `pnpm dev`.
+
+Ultraviolet and the Epoxy transport are AGPL-3.0 (per their LICENSE files);
+this repo being public keeps the source of what it serves available, as that
+license asks.
 
 ## node_modules is committed
 

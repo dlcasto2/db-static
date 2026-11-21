@@ -38,6 +38,7 @@ import {
   SquareTerminal,
   RotateCw,
   Search,
+  Server,
   ShieldAlert,
   ShieldCheck,
   Sparkles,
@@ -48,7 +49,6 @@ import {
   X,
 } from "lucide-react"
 import {
-  fetchThroughProxy,
   formatUrl,
   identityHandoff,
   isSearchInput,
@@ -58,6 +58,15 @@ import {
   type IdentityHandoff,
 } from "@/lib/proxy-utils"
 import { SessionManager, type BookmarkItem, type HistoryItem } from "@/lib/session-manager"
+import {
+  DEFAULT_WISP_SERVER,
+  clearUvData,
+  ensureUv,
+  getWispServer,
+  realUrlFromUv,
+  setWispServer,
+  uvUrl,
+} from "@/lib/uv"
 import {
   fetchAccount,
   mergeSync,
@@ -122,6 +131,14 @@ interface Tab {
   content?: string
   /** Changes on every successful load, so each page gets a fresh frame */
   loadId?: string
+  /**
+   * The page is shown through Ultraviolet (see lib/uv.ts): a frame pointed at
+   * the proxied address, which then loads and navigates on its own. Its
+   * address, title and history are read back from the frame (see UvFrame).
+   */
+  uv?: boolean
+  /** The Ultraviolet frame has finished its first load since loadId changed */
+  uvLoaded?: boolean
   /** Object URL for non-HTML responses (images, PDFs, text) */
   frameSrc?: string
   frameType?: string
@@ -190,6 +207,11 @@ function hostnameOf(url: string): string {
   } catch {
     return "Unknown"
   }
+}
+
+/** A site's icon. Fetched straight from Google: the proxy only serves pages inside its frame. */
+function faviconFor(url: string): string {
+  return `https://www.google.com/s2/favicons?domain=${encodeURIComponent(hostnameOf(url))}&sz=32`
 }
 
 /** Only what's worth persisting — page content can blow past the localStorage quota */
@@ -361,6 +383,60 @@ function ProxiedFrame({
   )
 }
 
+/**
+ * A page shown through Ultraviolet: the frame is pointed at the proxied
+ * address once, then navigates on its own. The address is only read when the
+ * frame is created (a new loadId, or switching back to the tab), so the
+ * address bar following the page along never reloads it.
+ */
+function UvFrame({
+  url,
+  title,
+  frameRef,
+  onLoad,
+}: {
+  url: string
+  title: string
+  frameRef: React.MutableRefObject<HTMLIFrameElement | null>
+  onLoad: (event: React.SyntheticEvent<HTMLIFrameElement>) => void
+}) {
+  const [src] = useState(() => uvUrl(url))
+  return (
+    <iframe
+      ref={(el) => {
+        if (el) frameRef.current = el
+      }}
+      src={src}
+      data-devon-page=""
+      onLoad={onLoad}
+      className="w-full flex-1 min-h-0 border-0 bg-white"
+      // Same as ProxiedFrame, plus dialogs and pointer lock, which nothing
+      // stands in for here. Never allow-top-navigation: a page can't take
+      // Devon itself somewhere else.
+      sandbox="allow-scripts allow-same-origin allow-forms allow-popups allow-popups-to-escape-sandbox allow-downloads allow-modals allow-pointer-lock"
+      allow="autoplay; clipboard-write; encrypted-media; fullscreen; picture-in-picture"
+      allowFullScreen
+      title={title}
+    />
+  )
+}
+
+/** Shown while a page loads */
+function PageLoading({ tab, className }: { tab: Tab; className?: string }) {
+  return (
+    <div className={cn("flex flex-1 flex-col items-center justify-center gap-4 p-6 text-center", className)}>
+      <span className="relative grid size-14 place-items-center rounded-2xl bg-white/[0.05] ring-1 ring-border">
+        <Favicon src={tab.favicon} className="size-6" />
+        <Loader2 className="absolute -right-1.5 -bottom-1.5 size-5 animate-spin rounded-full bg-background p-0.5 text-primary" />
+      </span>
+      <div>
+        <p className="text-sm font-medium">Loading {hostnameOf(tab.url)}</p>
+        <p className="mt-1 max-w-sm truncate font-mono text-xs text-muted-foreground">{tab.url}</p>
+      </div>
+    </div>
+  )
+}
+
 export function ProxyBrowser() {
   const [tabs, setTabs] = useState<Tab[]>([])
   const [currentUrl, setCurrentUrl] = useState("")
@@ -405,6 +481,8 @@ export function ProxyBrowser() {
   const [pageChecks, setPageChecks] = useState<Record<string, { loadId: string; state: PageCheckState; dismissed?: boolean }>>({})
 
   const controllersRef = useRef(new Map<string, AbortController>())
+  /** Per tab: the Ultraviolet navigation Devon started whose frame hasn't loaded yet (see handleUvLoad) */
+  const uvNavsRef = useRef(new Map<string, { loadId: string; mode: HistoryMode }>())
   const blobUrlsRef = useRef(new Map<string, string>())
   const iframeRef = useRef<HTMLIFrameElement | null>(null)
   const addressBarRef = useRef<HTMLInputElement>(null)
@@ -633,6 +711,8 @@ export function ProxyBrowser() {
               title,
               favicon,
               content: undefined,
+              uv: undefined,
+              uvLoaded: undefined,
               frameSrc: undefined,
               frameType: undefined,
               leftProxy: undefined,
@@ -683,6 +763,8 @@ export function ProxyBrowser() {
                   title: `Sign in blocked - ${hostnameOf(formattedUrl)}`,
                   isLoading: false,
                   content: undefined,
+                  uv: undefined,
+                  uvLoaded: undefined,
                   frameSrc: undefined,
                   frameType: undefined,
                   leftProxy: undefined,
@@ -711,6 +793,11 @@ export function ProxyBrowser() {
       controllersRef.current.get(tabId)?.abort()
       const controller = new AbortController()
       controllersRef.current.set(tabId, controller)
+      // Claimed before anything is awaited, so a load event from the frame
+      // this navigation is replacing can't be mistaken for its result (see
+      // handleUvLoad)
+      const loadId = makeId()
+      uvNavsRef.current.set(tabId, { loadId, mode: historyMode })
 
       releaseBlob(tabId)
       setTabs((prev) =>
@@ -719,115 +806,34 @@ export function ProxyBrowser() {
             ? {
                 ...tab,
                 url: formattedUrl,
+                title: hostnameOf(formattedUrl),
+                favicon: faviconFor(formattedUrl),
                 isLoading: true,
                 error: undefined,
                 errorDetails: undefined,
                 content: undefined,
+                uv: undefined,
+                uvLoaded: undefined,
                 frameSrc: undefined,
                 frameType: undefined,
                 leftProxy: undefined,
                 blockedSignIn: undefined,
+                isSecure: formattedUrl.startsWith("https://"),
               }
             : tab,
         ),
       )
 
+      // This build has no server to fetch pages through (db-v2's /api/proxy):
+      // they load through Ultraviolet instead, in the browser. A POST from a
+      // form needs nothing here — the form submits inside the proxied frame.
       try {
-        const result = await fetchThroughProxy(formattedUrl, { ...request, signal: controller.signal })
-        await extReadyRef.current
-        await devtoolsReadyRef.current
-
-        // A newer navigation (or a closed tab) superseded this one
-        if (controllersRef.current.get(tabId) !== controller) {
-          if (result.frameSrc) URL.revokeObjectURL(result.frameSrc)
-          return
-        }
-        controllersRef.current.delete(tabId)
-        if (result.frameSrc) blobUrlsRef.current.set(tabId, result.frameSrc)
-
-        const finalUrl = result.finalUrl
-
-        // A server-side redirect chain landed on one of these — the client
-        // never asked for it directly (isStrictIdentityUrl above would have
-        // caught that), but the same dead end applies: don't render whatever
-        // generic page it sent back.
-        if (isStrictIdentityUrl(finalUrl)) {
-          releaseBlob(tabId)
-          reportIdpBlock(finalUrl, formattedUrl)
-          setTabs((prev) =>
-            prev.map((tab) =>
-              tab.id === tabId
-                ? {
-                    ...tab,
-                    url: finalUrl,
-                    title: `Sign in blocked - ${hostnameOf(finalUrl)}`,
-                    isLoading: false,
-                    content: undefined,
-                    frameSrc: undefined,
-                    frameType: undefined,
-                    leftProxy: undefined,
-                    error: `${hostnameOf(finalUrl)}'s sign-in page can't render inside Devon (blocks embedding)`,
-                    errorDetails: undefined,
-                    blockedSignIn: identityHandoff(finalUrl, formattedUrl),
-                    isSecure: finalUrl.startsWith("https://"),
-                  }
-                : tab,
-            ),
-          )
-          return
-        }
-
-        // Updated by tab id, so a slow page can't land in whichever tab is active now
-        setTabs((prev) =>
-          prev.map((tab) => {
-            if (tab.id !== tabId) return tab
-
-            let history = tab.history
-            let historyIndex = tab.historyIndex
-            if (historyMode === "push") {
-              history = [...tab.history.slice(0, tab.historyIndex + 1), finalUrl]
-              historyIndex = history.length - 1
-            } else if (typeof historyMode === "object") {
-              historyIndex = historyMode.index
-              history = [...tab.history]
-              history[historyIndex] = finalUrl
-            } else if (historyIndex >= 0) {
-              history = [...tab.history]
-              history[historyIndex] = finalUrl
-            }
-
-            return {
-              ...tab,
-              url: finalUrl,
-              title: result.title,
-              favicon: result.favicon,
-              content: result.content,
-              loadId: makeId(),
-              frameSrc: result.frameSrc,
-              frameType: result.contentType,
-              isLoading: false,
-              error: undefined,
-              errorDetails: undefined,
-              blockedSignIn: undefined,
-              history,
-              historyIndex,
-              isSecure: finalUrl.startsWith("https://"),
-            }
-          }),
-        )
-
-        if (historyMode === "push" || historyMode === "replace") {
-          SessionManager.addToHistory({ title: result.title, url: finalUrl, favicon: result.favicon })
-          setHistory(SessionManager.loadSession().history)
-        }
+        await ensureUv()
       } catch (error) {
         if (controllersRef.current.get(tabId) !== controller) return
         controllersRef.current.delete(tabId)
-
-        const aborted = error instanceof Error && error.name === "AbortError"
-        const errorMessage = aborted ? STOPPED_MESSAGE : error instanceof Error ? error.message : "Failed to load page"
-        const errorDetails = !aborted && error instanceof Error && error.stack ? error.stack : ""
-
+        if (uvNavsRef.current.get(tabId)?.loadId === loadId) uvNavsRef.current.delete(tabId)
+        const errorMessage = error instanceof Error ? error.message : "Devon's proxy couldn't start"
         setTabs((prev) =>
           prev.map((tab) =>
             tab.id === tabId
@@ -835,15 +841,36 @@ export function ProxyBrowser() {
                   ...tab,
                   isLoading: false,
                   error: errorMessage,
-                  errorDetails,
-                  blockedSignIn: undefined,
-                  title: aborted ? hostnameOf(formattedUrl) : "Error - " + hostnameOf(formattedUrl),
+                  errorDetails: error instanceof Error && error.stack ? error.stack : "",
+                  title: "Error - " + hostnameOf(formattedUrl),
                   isSecure: false,
                 }
               : tab,
           ),
         )
+        return
       }
+
+      // A newer navigation, a closed tab, or Stop superseded this one
+      if (controllersRef.current.get(tabId) !== controller) return
+
+      // From here the frame does the loading, so Stop stops the frame
+      controller.signal.addEventListener("abort", () => {
+        if (tabsRef.current.find((t) => t.isActive)?.id === tabId) {
+          try {
+            iframeRef.current?.contentWindow?.stop()
+          } catch {
+            // the frame left the proxy
+          }
+        }
+        setTabs((prev) =>
+          prev.map((tab) => (tab.id === tabId && tab.loadId === loadId ? { ...tab, isLoading: false, uvLoaded: true } : tab)),
+        )
+      })
+
+      setTabs((prev) =>
+        prev.map((tab) => (tab.id === tabId ? { ...tab, uv: true, uvLoaded: false, loadId } : tab)),
+      )
     },
     [releaseBlob],
   )
@@ -901,6 +928,7 @@ export function ProxyBrowser() {
       tab &&
       tab.url &&
       tab.content === undefined &&
+      !tab.uv &&
       !tab.frameSrc &&
       !tab.isLoading &&
       !tab.error &&
@@ -1109,6 +1137,219 @@ export function ProxyBrowser() {
     )
   }
 
+  /**
+   * An Ultraviolet frame finished loading a page: either the navigation Devon
+   * started (loadId matches uvNavsRef) or one the page made itself — a link,
+   * a form, a script — which Ultraviolet kept inside the proxy. Either way the
+   * frame's own address says where it really is.
+   */
+  const handleUvLoad = (tabId: string, loadId: string | undefined) => (event: React.SyntheticEvent<HTMLIFrameElement>) => {
+    const frame = event.currentTarget
+    let win: Window | null = null
+    let href = ""
+    try {
+      win = frame.contentWindow
+      href = win?.location.href ?? ""
+    } catch {
+      win = null // cross-origin: the page left the proxy
+    }
+    if (href === "about:blank") return
+
+    const pending = uvNavsRef.current.get(tabId)
+    if (pending && pending.loadId !== loadId) return // this frame is already being replaced
+    let mode: HistoryMode = "push"
+    if (pending) {
+      uvNavsRef.current.delete(tabId)
+      controllersRef.current.delete(tabId)
+      mode = pending.mode
+    }
+
+    const url = href ? realUrlFromUv(href) : null
+    if (!url || !win) {
+      setTabs((prev) =>
+        prev.map((tab) => (tab.id === tabId ? { ...tab, leftProxy: true, isLoading: false, uvLoaded: true } : tab)),
+      )
+      return
+    }
+
+    // Ultraviolet's own error page, when the Wisp server can't be reached:
+    // nothing will load until that changes, so say so in Devon's words
+    let failure = ""
+    try {
+      const doc = win.document
+      // Its script fills the trace box in before the load event
+      const trace = (doc.getElementById("errorTrace") as HTMLTextAreaElement | null)?.value ?? ""
+      if (doc.getElementById("errorTitle") && /Wisp WebSocket failed|WebSocketConnectFailed/i.test(trace)) failure = trace.trim()
+    } catch {
+      failure = ""
+    }
+    if (failure) {
+      setTabs((prev) =>
+        prev.map((tab) =>
+          tab.id === tabId
+            ? {
+                ...tab,
+                url,
+                title: "Error - " + hostnameOf(url),
+                isLoading: false,
+                uv: undefined,
+                uvLoaded: undefined,
+                error: `Couldn't reach Devon's proxy server (${getWispServer()}). It may be down or blocked on this network — try another under ⋮ → Proxy server.`,
+                errorDetails: failure,
+                isSecure: false,
+              }
+            : tab,
+        ),
+      )
+      return
+    }
+
+    let title = ""
+    try {
+      title = win.document.title.trim()
+    } catch {
+      title = ""
+    }
+    title ||= hostnameOf(url)
+    const favicon = faviconFor(url)
+    const current = tabsRef.current.find((t) => t.id === tabId)
+    const sameEntry = current ? current.history[current.historyIndex] === url : false
+
+    setTabs((prev) =>
+      prev.map((tab) => {
+        if (tab.id !== tabId) return tab
+        let history = tab.history
+        let historyIndex = tab.historyIndex
+        if (mode === "push") {
+          if (history[historyIndex] !== url) {
+            history = [...history.slice(0, historyIndex + 1), url]
+            historyIndex = history.length - 1
+          }
+        } else if (typeof mode === "object") {
+          historyIndex = mode.index
+          history = [...history]
+          history[historyIndex] = url
+        } else if (historyIndex >= 0) {
+          // replace, reload: same entry, wherever redirects ended up
+          history = [...history]
+          history[historyIndex] = url
+        } else {
+          history = [url]
+          historyIndex = 0
+        }
+        return {
+          ...tab,
+          url,
+          title,
+          favicon,
+          isLoading: false,
+          uvLoaded: true,
+          leftProxy: false,
+          error: undefined,
+          errorDetails: undefined,
+          history,
+          historyIndex,
+          isSecure: url.startsWith("https://"),
+        }
+      }),
+    )
+    if ((mode === "push" && !sameEntry) || mode === "replace") {
+      SessionManager.addToHistory({ title, url, favicon })
+      setHistory(SessionManager.loadSession().history)
+    }
+    watchUvFrame(tabId, win)
+  }
+
+  /**
+   * Keeps the address bar and tab title in step with what a proxied page does
+   * without loading a new document (history.pushState, #hash jumps, a title
+   * set by script), and opens its new-window links as Devon tabs instead of
+   * bare proxied pages outside Devon.
+   */
+  const watchUvFrame = (tabId: string, win: Window) => {
+    const doc = win.document
+
+    const syncUrl = (replace: boolean) => {
+      let url: string | null = null
+      try {
+        url = realUrlFromUv(win.location.href)
+      } catch {
+        url = null
+      }
+      if (!url) return
+      const pageUrl = url
+      setTabs((prev) =>
+        prev.map((tab) => {
+          if (tab.id !== tabId || tab.url === pageUrl) return tab
+          let history = tab.history
+          let historyIndex = tab.historyIndex
+          if (replace && historyIndex >= 0) {
+            history = [...tab.history]
+            history[historyIndex] = pageUrl
+          } else {
+            history = [...tab.history.slice(0, historyIndex + 1), pageUrl]
+            historyIndex = history.length - 1
+          }
+          return { ...tab, url: pageUrl, history, historyIndex, isSecure: pageUrl.startsWith("https://") }
+        }),
+      )
+    }
+
+    try {
+      // Ultraviolet has already wrapped these to rewrite the address; this
+      // reads the rewritten one back afterwards
+      const history = win.history
+      const pushState = history.pushState
+      const replaceState = history.replaceState
+      history.pushState = function (this: History, ...args: Parameters<History["pushState"]>) {
+        const result = pushState.apply(this, args)
+        syncUrl(false)
+        return result
+      }
+      history.replaceState = function (this: History, ...args: Parameters<History["replaceState"]>) {
+        const result = replaceState.apply(this, args)
+        syncUrl(true)
+        return result
+      }
+      win.addEventListener("hashchange", () => syncUrl(false))
+    } catch {
+      // best-effort
+    }
+
+    try {
+      const Observer = (win as Window & typeof globalThis).MutationObserver
+      let lastTitle = doc.title
+      new Observer(() => {
+        const title = doc.title.trim()
+        if (!title || title === lastTitle) return
+        lastTitle = title
+        setTabs((prev) => prev.map((tab) => (tab.id === tabId && tab.title !== title ? { ...tab, title } : tab)))
+      }).observe(doc.head ?? doc.documentElement, { subtree: true, childList: true, characterData: true })
+    } catch {
+      // best-effort
+    }
+
+    const openNewWindowLink = (event: MouseEvent) => {
+      if (event.defaultPrevented) return
+      const target = event.target as (Element & { closest?: Element["closest"] }) | null
+      const anchor = target?.closest?.("a[href]") as HTMLAnchorElement | null | undefined
+      if (!anchor || anchor.hasAttribute("download")) return
+      const newWindow =
+        event.type === "auxclick"
+          ? event.button === 1
+          : event.button === 0 && (event.ctrlKey || event.metaKey || anchor.target.toLowerCase() === "_blank")
+      if (!newWindow) return
+      // Ultraviolet may hand back the real address or its own proxied one
+      const real = realUrlFromUv(anchor.href) ?? (/^https?:\/\//i.test(anchor.href) ? anchor.href : null)
+      if (!real) return
+      event.preventDefault()
+      event.stopPropagation()
+      openInNewTab(real)
+    }
+    doc.addEventListener("click", openNewWindowLink, true)
+    doc.addEventListener("auxclick", openNewWindowLink, true)
+  }
+
   const navigateActive = (url: string) => {
     if (activeTab) navigate(activeTab.id, url, "push")
   }
@@ -1154,6 +1395,8 @@ export function ProxyBrowser() {
               isLoading: false,
               favicon: undefined,
               content: undefined,
+              uv: undefined,
+              uvLoaded: undefined,
               frameSrc: undefined,
               frameType: undefined,
               error: undefined,
@@ -1166,6 +1409,23 @@ export function ProxyBrowser() {
     )
   }
 
+  /** Pages travel (encrypted) through a Wisp server; this picks which one */
+  const editProxyServer = async () => {
+    const current = getWispServer()
+    const input = prompt(
+      `Wisp server for Devon's proxy (wss://…).\n\nLeave empty to use the public demo server, ${DEFAULT_WISP_SERVER} — it's rate-limited, so your own server is faster.`,
+      current === DEFAULT_WISP_SERVER ? "" : current,
+    )
+    if (input === null) return
+    try {
+      await setWispServer(input)
+      toast.success(`Proxy server: ${getWispServer()}`)
+      if (activeTab?.uv) refresh()
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : String(error))
+    }
+  }
+
   const clearBrowsingData = () => {
     if (confirm("Are you sure you want to clear all browsing data? This cannot be undone.")) {
       controllersRef.current.forEach((c) => c.abort())
@@ -1173,6 +1433,7 @@ export function ProxyBrowser() {
       blobUrlsRef.current.forEach((u) => URL.revokeObjectURL(u))
       blobUrlsRef.current.clear()
       SessionManager.clearAllData()
+      clearUvData()
       // Site cookies stored by the proxy are HttpOnly, so the server clears them
       fetch("/api/proxy?clearCookies=1").catch(() => {})
       setTabs([blankTab()])
@@ -1973,6 +2234,13 @@ export function ProxyBrowser() {
                 <span className="flex-1">reCAPTCHA support</span>
                 <Switch checked={experimentalRecaptcha} className="pointer-events-none scale-90" />
               </DropdownMenuItem>
+              <DropdownMenuItem
+                onSelect={() => void editProxyServer()}
+                title="The Wisp server Devon's proxy tunnels pages through"
+              >
+                <Server />
+                <span className="flex-1">Proxy server…</span>
+              </DropdownMenuItem>
               <DropdownMenuSeparator />
               <DropdownMenuItem variant="destructive" onSelect={clearBrowsingData}>
                 <Trash2 /> Clear browsing data
@@ -2081,7 +2349,7 @@ export function ProxyBrowser() {
               </Button>
             </div>
           )}
-          {activeTab?.leftProxy && activeTab.content !== undefined && (
+          {activeTab?.leftProxy && (activeTab.content !== undefined || activeTab.uv) && (
             <div className="flex items-center gap-3 border-b border-amber-400/20 bg-amber-400/10 px-3 py-2 text-[13px] text-amber-200">
               <ShieldAlert className="size-4 flex-shrink-0 text-amber-400" />
               <span className="flex-1">
@@ -2101,6 +2369,17 @@ export function ProxyBrowser() {
               frameRef={iframeRef}
               onLoad={handleFrameLoad(activeTab.id)}
             />
+          ) : activeTab?.uv ? (
+            <div className="relative flex min-h-0 flex-1 flex-col">
+              <UvFrame
+                key={`${activeTab.id}:${activeTab.loadId}`}
+                url={activeTab.url}
+                title={activeTab.title}
+                frameRef={iframeRef}
+                onLoad={handleUvLoad(activeTab.id, activeTab.loadId)}
+              />
+              {!activeTab.uvLoaded && <PageLoading tab={activeTab} className="absolute inset-0 bg-background" />}
+            </div>
           ) : activeTab?.frameSrc ? (
             // Non-HTML responses: PDFs need an unsandboxed frame for the built-in viewer;
             // everything else (images, SVG, text) is shown with scripts disabled
@@ -2211,16 +2490,7 @@ export function ProxyBrowser() {
               </div>
             </div>
           ) : activeTab?.url ? (
-            <div className="flex flex-1 flex-col items-center justify-center gap-4 p-6 text-center">
-              <span className="relative grid size-14 place-items-center rounded-2xl bg-white/[0.05] ring-1 ring-border">
-                <Favicon src={activeTab.favicon} className="size-6" />
-                <Loader2 className="absolute -right-1.5 -bottom-1.5 size-5 animate-spin rounded-full bg-background p-0.5 text-primary" />
-              </span>
-              <div>
-                <p className="text-sm font-medium">Loading {hostnameOf(activeTab.url)}</p>
-                <p className="mt-1 max-w-sm truncate font-mono text-xs text-muted-foreground">{activeTab.url}</p>
-              </div>
-            </div>
+            <PageLoading tab={activeTab} />
           ) : (
             <NewTabPage
               key={activeTab?.id}

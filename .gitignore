@@ -11,6 +11,14 @@ next-env.d.ts
 # (ffmpeg.wasm's ~10 MB core, gzipped and split) — never hand-edited, and
 # nothing on the pages that remain in this static export actually uses it.
 public/vendor/ffmpeg-core/
+# Ultraviolet's prebuilt scripts, the bare-mux worker and the Wisp transport,
+# copied out of node_modules by the same postinstall hook. Only public/uv/sw.js
+# and public/uv/uv.config.js are written by hand, so only they are committed.
+public/uv/uv.*.js
+public/uv/*.map
+!public/uv/uv.config.js
+public/baremux/
+public/epoxy/
 # The one piece of node_modules NOT committed, despite the rest of it being
 # tracked above: GitHub hard-rejects any single git object over 100 MB, and
 # this native binary (Next's Rust-based compiler, @next/swc) is ~125 MB on

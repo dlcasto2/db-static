@@ -32,6 +32,44 @@ try {
   console.warn("copy-vendor: @ffmpeg/ffmpeg not installed, skipping", error.message)
 }
 
+// Ultraviolet, the proxy this static build browses through (see lib/uv.ts and
+// public/uv/sw.js). Its service worker, page scripts and the bare-mux worker
+// all have to be same-origin files, and the Wisp transport is loaded by URL
+// from inside that worker, so none of them can go through Next's bundler.
+// public/uv/sw.js and public/uv/uv.config.js are hand-written and committed;
+// everything copied here is gitignored and regenerated on every install.
+// (Found by their folder rather than require.resolve: bare-mux's "exports"
+// field doesn't expose its worker build or package.json.)
+const pkgDir = (name) => join(root, "node_modules", ...name.split("/"))
+try {
+  const uvDist = join(pkgDir("@titaniumnetwork-dev/ultraviolet"), "dist")
+  const uvOut = join(root, "public", "uv")
+  mkdirSync(uvOut, { recursive: true })
+  for (const file of ["uv.bundle.js", "uv.client.js", "uv.handler.js", "uv.sw.js"]) {
+    copyFileSync(join(uvDist, file), join(uvOut, file))
+    copyFileSync(join(uvDist, `${file}.map`), join(uvOut, `${file}.map`))
+  }
+  console.log("copy-vendor: @titaniumnetwork-dev/ultraviolet -> public/uv/")
+
+  const bareMuxDist = join(pkgDir("@mercuryworkshop/bare-mux"), "dist")
+  const bareMuxOut = join(root, "public", "baremux")
+  mkdirSync(bareMuxOut, { recursive: true })
+  copyFileSync(join(bareMuxDist, "worker.js"), join(bareMuxOut, "worker.js"))
+  copyFileSync(join(bareMuxDist, "worker.js.map"), join(bareMuxOut, "worker.js.map"))
+  console.log("copy-vendor: @mercuryworkshop/bare-mux worker -> public/baremux/")
+
+  // The ES module build, saved as .js rather than .mjs: the bare-mux worker
+  // import()s it, which needs a JavaScript MIME type, and not every static
+  // host maps .mjs to one.
+  const epoxyDist = join(pkgDir("@mercuryworkshop/epoxy-transport"), "dist")
+  const epoxyOut = join(root, "public", "epoxy")
+  mkdirSync(epoxyOut, { recursive: true })
+  copyFileSync(join(epoxyDist, "index.mjs"), join(epoxyOut, "index.js"))
+  console.log("copy-vendor: @mercuryworkshop/epoxy-transport -> public/epoxy/")
+} catch (error) {
+  console.warn("copy-vendor: Ultraviolet files not installed, skipping", error.message)
+}
+
 // ffmpeg.wasm's core (~31 MB), served from Devon itself so HD merging and MP3
 // work on networks that block CDNs. The .wasm is gzipped and split into ~3 MB
 // parts to stay under static-hosting file limits; lib/youtube.ts joins and
