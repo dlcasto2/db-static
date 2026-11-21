@@ -10,6 +10,7 @@
  * only the parts of the chrome.* API that make sense without a background
  * page are provided.
  */
+import { withBasePath } from "@/lib/base-path"
 import { matchesContentScript, matchesPattern, matchesUserscript } from "./match"
 import { PackageFiles, buildBackgroundHtml, buildPageHtml, resolvePath } from "./pages"
 import {
@@ -303,7 +304,7 @@ export class ExtensionHost {
         }, 0)
       }
       frame.addEventListener("load", onLoad)
-      frame.src = `/devon-frame.html?ext=${Date.now()}`
+      frame.src = withBasePath(`/devon-frame.html?ext=${Date.now()}`)
     })
   }
 

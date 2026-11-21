@@ -3,6 +3,7 @@
 import { useEffect, useState } from "react"
 import { YouTubePage } from "@/components/youtube-page"
 import { type YouTubeRoute, parseYouTubeUrl, youTubePageUrl } from "@/lib/youtube"
+import { withBasePath } from "@/lib/base-path"
 
 /** Standalone YouTube page (/youtube, /youtube?q=…, /youtube?v=…) — the same page Devon opens at devon://apps/youtube */
 export default function YouTube() {
@@ -19,7 +20,7 @@ export default function YouTube() {
   }, [])
   const go = (next: YouTubeRoute) => {
     const qs = youTubePageUrl(next).replace(/^devon:\/\/(?:apps\/)?youtube(\/watch)?/, "")
-    history.pushState(null, "", `/youtube${qs}`)
+    history.pushState(null, "", withBasePath(`/youtube${qs}`))
     setRoute(next)
   }
   return <main className="h-dvh w-full">{route && <YouTubePage route={route} onNavigate={go} onTitle={(t) => (document.title = t)} />}</main>

@@ -33,37 +33,46 @@ The one exception: Next's Rust-based compiler, `@next/swc`, ships as a
 isn't in the commit (see `.gitignore`). The normal fix for a single
 oversized file like this is Git LFS, but this repo was pushed from an
 environment whose network policy couldn't reach LFS's storage backend, so
-it went with the plainer option instead: that one file is fetched with an
-ordinary `pnpm install --frozen-lockfile` (which, since the lockfile and
-the rest of `node_modules` already match, only ever fetches that one
-missing package) — see the one extra step in
-`.github/workflows/pages.yml`, or run it yourself before building locally.
+it went with the plainer option instead: run `pnpm install
+--frozen-lockfile` once after cloning to fetch it. (On a fresh machine pnpm
+sees the committed `node_modules` was made against a different store and
+reinstalls it from the lockfile, which is also what happens in the Pages
+workflow.)
 
 This only targets glibc Linux (what GitHub's own runners and most desktop
-Linux use) — the musl build of `@next/swc`, and the musl variant of every
-other native dependency, were deliberately left out (see `.npmrc`) to
-avoid shipping duplicate binaries for a platform nothing here runs on.
-
-If you want to regenerate the rest of `node_modules` yourself instead of
-trusting the committed copy (a dependency bump, say), the usual
-`pnpm install` works the same way — `.npmrc`'s `supportedArchitectures`
-setting keeps it to one platform.
+Linux use). `.npmrc` asks pnpm to skip musl builds of native dependencies,
+and `.gitignore` keeps the musl `@next/swc` binary out of the commit for
+the times pnpm installs it anyway.
 
 ## Building
 
 ```
-pnpm install --frozen-lockfile   # fetches only @next/swc (see above) — fast
-pnpm exec next build             # or: node_modules/.bin/next build
+pnpm install --frozen-lockfile   # fetches @next/swc (see above)
+pnpm build
 ```
 
-Output goes to `out/` — plain HTML/CSS/JS, no server needed to serve it.
+Output goes to `out/` — plain HTML/CSS/JS, no server needed to serve it. A
+plain local build like this is meant to be served from a domain root
+(`npx serve out`, say).
 
 ## Deploying
 
 `.github/workflows/pages.yml` builds and publishes `out/` to GitHub Pages on
-every push to `main`, using GitHub's own `actions/deploy-pages` (Pages must
-be set to deploy from "GitHub Actions" in this repo's Settings → Pages, not
-from a branch).
+every push to `main` (Pages must be set to deploy from "GitHub Actions" in
+this repo's Settings → Pages, not from a branch).
+
+GitHub Pages serves a project repo from a subpath —
+`https://<user>.github.io/db-static/`, not a domain root — so the build
+needs that subpath as its `basePath`. `next.config.mjs` works it out from
+the `GITHUB_REPOSITORY` variable GitHub Actions always sets, so the workflow
+doesn't pass anything. To override it (an empty value for a custom domain
+served at its root, say), set `NEXT_PUBLIC_BASE_PATH`.
+
+Next only adds that prefix to what it generates itself (its JS/CSS chunks,
+`next/link`, `next/image`). The rest of this codebase, inherited from
+db-v2, hardcodes root-absolute paths like `/icon.svg` and `/games/...`, so
+each of those goes through `withBasePath()` from `lib/base-path.ts`. Any new
+one needs to as well, or it'll 404 on Pages while working fine locally.
 
 ## Why this exists
 

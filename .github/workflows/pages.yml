@@ -1,12 +1,8 @@
-name: Deploy to GitHub Pages
+name: Deploy Next.js to GitHub Pages
 
-# This repo commits node_modules (see README), so this workflow doesn't run
-# a real install step — just a check for the one file excluded from the
-# commit (@next/swc's ~125 MB native binary, over GitHub's 100 MB per-file
-# limit; see .gitignore) before running `next build` against what's there.
 on:
   push:
-    branches: [main]
+    branches: ["main"]
   workflow_dispatch:
 
 permissions:
@@ -14,50 +10,37 @@ permissions:
   pages: write
   id-token: write
 
-# Only one deployment at a time; a new push cancels an in-flight one rather
-# than queuing behind it.
 concurrency:
-  group: pages
-  cancel-in-progress: true
+  group: "pages"
+  cancel-in-progress: false
 
 jobs:
   build:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - name: Checkout
+        uses: actions/checkout@v4
 
-      - uses: actions/configure-pages@v5
-
-      # No actions/setup-node + full install step on purpose: node_modules
-      # is already committed, and ubuntu-latest ships a recent-enough Node
-      # for `next build` to run against it directly. The one exception is
-      # @next/swc's native binary, which isn't in the repo at all (see
-      # .gitignore) — pnpm fetches just that one package, using the
-      # committed lockfile so nothing else is re-resolved.
       - uses: pnpm/action-setup@v4
-      - name: Fetch the one native binary not committed to the repo
-        # .npmrc (committed) pins this to glibc only, same as the rest of
-        # node_modules — otherwise pnpm would also fetch the musl build.
-        run: pnpm install --frozen-lockfile
-
-      - name: Build (static export)
-        # This repo is served at a subpath on GitHub Pages
-        # (https://<user>.github.io/db-static/), not a domain root — see
-        # next.config.mjs and lib/base-path.ts for what this env var drives.
-        env:
-          NEXT_PUBLIC_BASE_PATH: /db-static
-        run: node_modules/.bin/next build
-
-      - uses: actions/upload-pages-artifact@v3
+      - uses: actions/setup-node@v4
         with:
-          path: out
+          node-version: "20"
+          cache: "pnpm"
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm build
+
+      - name: Upload artifact
+        uses: actions/upload-pages-artifact@v3
+        with:
+          path: ./out
 
   deploy:
-    needs: build
-    runs-on: ubuntu-latest
     environment:
       name: github-pages
       url: ${{ steps.deployment.outputs.page_url }}
+    runs-on: ubuntu-latest
+    needs: build
     steps:
-      - id: deployment
+      - name: Deploy to GitHub Pages
+        id: deployment
         uses: actions/deploy-pages@v4
