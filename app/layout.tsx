@@ -2,6 +2,7 @@ import type React from "react"
 import type { Metadata, Viewport } from "next"
 import { Geist, Geist_Mono } from "next/font/google"
 import { withBasePath } from "@/lib/base-path"
+import { THEME_BOOT_SCRIPT } from "@/lib/themes"
 import "./globals.css"
 
 export const metadata: Metadata = {
@@ -33,7 +34,11 @@ export default function RootLayout({
   children: React.ReactNode
 }>) {
   return (
-    <html lang="en" className="dark">
+    <html lang="en" className="dark" suppressHydrationWarning>
+      <head>
+        {/* Applies a saved theme before the first paint (lib/themes.ts) */}
+        <script dangerouslySetInnerHTML={{ __html: THEME_BOOT_SCRIPT }} />
+      </head>
       <body className={`font-sans antialiased ${geistSans.variable} ${geistMono.variable}`}>
         {children}
       </body>

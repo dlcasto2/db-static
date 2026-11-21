@@ -47,6 +47,60 @@
   --omnibox: oklch(0.155 0.006 270);
 }
 
+/* Themes ported from Abyss-Web (lib/themes.ts). Each is one base colour; every
+   surface is mixed from it so the tab strip, toolbar and menus stay distinct. */
+:root[data-devon-theme] {
+  --background: var(--devon-base);
+  --omnibox: var(--devon-base);
+  --chrome: color-mix(in oklch, var(--devon-base), black 28%);
+  --toolbar: color-mix(in oklch, var(--devon-base), white 7%);
+  --card: color-mix(in oklch, var(--devon-base), white 5%);
+  --popover: color-mix(in oklch, var(--devon-base), white 7%);
+  --secondary: color-mix(in oklch, var(--devon-base), white 11%);
+  --muted: color-mix(in oklch, var(--devon-base), white 9%);
+  --accent: color-mix(in oklch, var(--devon-base), white 12%);
+  --sidebar: color-mix(in oklch, var(--devon-base), white 3%);
+}
+:root[data-devon-theme="moon"] {
+  --devon-base: #000;
+  --chrome: #000;
+}
+:root[data-devon-theme="grey"] {
+  --devon-base: #1f1f1f;
+}
+/* Catppuccin Mocha, Macchiato and Frappé, with Catppuccin's lavender accent */
+:root[data-devon-theme="mocha"] {
+  --devon-base: #1e1e2e;
+  --primary: #b4befe;
+  --ring: rgb(180 190 254 / 0.6);
+}
+:root[data-devon-theme="macchiato"] {
+  --devon-base: #24273a;
+  --primary: #b7bdf8;
+  --ring: rgb(183 189 248 / 0.6);
+}
+:root[data-devon-theme="frappe"] {
+  --devon-base: #303446;
+  --primary: #babbf1;
+  --ring: rgb(186 187 241 / 0.6);
+}
+/* A light base: surfaces darken from it instead, and muted text stays readable */
+:root[data-devon-theme="cappuccino"] {
+  --devon-base: #a18d68;
+  --chrome: color-mix(in oklch, var(--devon-base), black 38%);
+  --toolbar: color-mix(in oklch, var(--devon-base), black 22%);
+  --card: color-mix(in oklch, var(--devon-base), black 12%);
+  --popover: color-mix(in oklch, var(--devon-base), black 26%);
+  --secondary: color-mix(in oklch, var(--devon-base), black 30%);
+  --muted: color-mix(in oklch, var(--devon-base), black 18%);
+  --accent: color-mix(in oklch, var(--devon-base), black 32%);
+  --sidebar: color-mix(in oklch, var(--devon-base), black 10%);
+  --omnibox: color-mix(in oklch, var(--devon-base), black 34%);
+  --muted-foreground: oklch(0.9 0.02 80);
+  --primary: #f5e0c3;
+  --primary-foreground: #3b2f1c;
+}
+
 @theme inline {
   --font-sans: var(--font-geist-sans);
   --font-mono: var(--font-geist-mono);

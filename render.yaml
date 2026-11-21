@@ -1,0 +1,10 @@
+# One-click deploy of Devon with its own proxy backend on Render (adapted
+# from Abyss-Web's render.yaml). Render's free plan supports the WebSockets
+# the Wisp server needs.
+services:
+  - type: web
+    name: devon
+    runtime: docker
+    plan: free
+    dockerfilePath: ./server/Dockerfile
+    dockerContext: .

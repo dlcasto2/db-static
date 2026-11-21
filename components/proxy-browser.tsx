@@ -38,7 +38,7 @@ import {
   SquareTerminal,
   RotateCw,
   Search,
-  Server,
+  Settings,
   ShieldAlert,
   ShieldCheck,
   Sparkles,
@@ -58,15 +58,9 @@ import {
   type IdentityHandoff,
 } from "@/lib/proxy-utils"
 import { SessionManager, type BookmarkItem, type HistoryItem } from "@/lib/session-manager"
-import {
-  DEFAULT_WISP_SERVER,
-  clearUvData,
-  ensureUv,
-  getWispServer,
-  realUrlFromUv,
-  setWispServer,
-  uvUrl,
-} from "@/lib/uv"
+import { clearUvData, ensureUv, getProxyServer, realUrlFromUv, uvUrl } from "@/lib/uv"
+import { applyTabCloak, handlePanicKey, isFramed, openAboutBlank, readCloak } from "@/lib/cloak"
+import { SettingsDialog } from "@/components/settings-dialog"
 import {
   fetchAccount,
   mergeSync,
@@ -468,6 +462,7 @@ export function ProxyBrowser() {
   const [, setExtTick] = useState(0)
   const [extensions, setExtensions] = useState<Extension[]>([])
   const [extensionsOpen, setExtensionsOpen] = useState(false)
+  const [settingsOpen, setSettingsOpen] = useState(false)
   /** What the extensions menu shows, captured when it opens */
   const [extMenu, setExtMenu] = useState<{ running: Set<string>; commands: MenuCommand[] }>({
     running: new Set(),
@@ -523,6 +518,22 @@ export function ProxyBrowser() {
       setDevtoolsOn(true)
       devtoolsReadyRef.current = loadDevtoolsSource()
     }
+  }, [])
+
+  // Cloaking (lib/cloak.ts, from Abyss-Web): the tab cloak, the panic key,
+  // and reopening in about:blank on each visit if that's switched on
+  useEffect(() => {
+    applyTabCloak()
+    window.addEventListener("keydown", handlePanicKey, true)
+    if (readCloak().autoBlank && !isFramed() && !openAboutBlank()) {
+      // Browsers only allow pop-ups from a click
+      toast("Open Devon in about:blank?", {
+        description: "Your browser blocked it from opening by itself.",
+        duration: 15000,
+        action: { label: "Open", onClick: () => void openAboutBlank() },
+      })
+    }
+    return () => window.removeEventListener("keydown", handlePanicKey, true)
   }, [])
 
   // ── Account (Auth0): sign-in state and cross-device sync of bookmarks/history
@@ -1194,7 +1205,7 @@ export function ProxyBrowser() {
                 isLoading: false,
                 uv: undefined,
                 uvLoaded: undefined,
-                error: `Couldn't reach Devon's proxy server (${getWispServer()}). It may be down or blocked on this network — try another under ⋮ → Proxy server.`,
+                error: `Couldn't reach Devon's proxy server (${getProxyServer()}). It may be down or blocked on this network — try another under ⋮ → Settings → Proxy server.`,
                 errorDetails: failure,
                 isSecure: false,
               }
@@ -1258,6 +1269,7 @@ export function ProxyBrowser() {
       setHistory(SessionManager.loadSession().history)
     }
     watchUvFrame(tabId, win)
+    if (devtoolsOnRef.current) injectDevtools(win)
   }
 
   /**
@@ -1348,6 +1360,8 @@ export function ProxyBrowser() {
     }
     doc.addEventListener("click", openNewWindowLink, true)
     doc.addEventListener("auxclick", openNewWindowLink, true)
+    // Keys pressed in the page never reach Devon's window
+    doc.addEventListener("keydown", handlePanicKey, true)
   }
 
   const navigateActive = (url: string) => {
@@ -1409,22 +1423,17 @@ export function ProxyBrowser() {
     )
   }
 
-  /** Pages travel (encrypted) through a Wisp server; this picks which one */
-  const editProxyServer = async () => {
-    const current = getWispServer()
-    const input = prompt(
-      `Wisp server for Devon's proxy (wss://…).\n\nLeave empty to use the public demo server, ${DEFAULT_WISP_SERVER} — it's rate-limited, so your own server is faster.`,
-      current === DEFAULT_WISP_SERVER ? "" : current,
-    )
-    if (input === null) return
-    try {
-      await setWispServer(input)
-      toast.success(`Proxy server: ${getWispServer()}`)
-      if (activeTab?.uv) refresh()
-    } catch (error) {
-      toast.error(error instanceof Error ? error.message : String(error))
-    }
+  /** The proxy server changed in Settings: reload what was showing through the old one */
+  const reloadAfterProxyChange = () => {
+    const tab = tabsRef.current.find((t) => t.isActive)
+    if (tab?.url && (tab.uv || tab.error)) navigate(tab.id, tab.url, reloadMode(tab))
   }
+
+  const notify = useCallback((message: string, kind?: "success" | "error") => {
+    if (kind === "error") toast.error(message)
+    else if (kind === "success") toast.success(message)
+    else toast(message)
+  }, [])
 
   const clearBrowsingData = () => {
     if (confirm("Are you sure you want to clear all browsing data? This cannot be undone.")) {
@@ -1520,7 +1529,8 @@ export function ProxyBrowser() {
           toast.error("Couldn't load the developer tools.")
           return
         }
-        if (activeTabIdRef.current && tabsRef.current.find((t) => t.isActive)?.content !== undefined) {
+        const tab = tabsRef.current.find((t) => t.isActive)
+        if (activeTabIdRef.current && (tab?.content !== undefined || tab?.uv)) {
           toggleDevtoolsPanel(iframeRef.current?.contentWindow)
         }
       })
@@ -1973,7 +1983,7 @@ export function ProxyBrowser() {
           {devtoolsOn && (
             <ToolbarButton
               onClick={() => toggleDevtoolsPanel(iframeRef.current?.contentWindow)}
-              disabled={activeTab?.content === undefined}
+              disabled={activeTab?.content === undefined && !activeTab?.uv}
               title="Show / hide developer tools (Ctrl+Shift+E)"
             >
               <SquareTerminal className="size-4" />
@@ -2234,12 +2244,8 @@ export function ProxyBrowser() {
                 <span className="flex-1">reCAPTCHA support</span>
                 <Switch checked={experimentalRecaptcha} className="pointer-events-none scale-90" />
               </DropdownMenuItem>
-              <DropdownMenuItem
-                onSelect={() => void editProxyServer()}
-                title="The Wisp server Devon's proxy tunnels pages through"
-              >
-                <Server />
-                <span className="flex-1">Proxy server…</span>
+              <DropdownMenuItem onSelect={() => setSettingsOpen(true)}>
+                <Settings /> Settings
               </DropdownMenuItem>
               <DropdownMenuSeparator />
               <DropdownMenuItem variant="destructive" onSelect={clearBrowsingData}>
@@ -2575,6 +2581,12 @@ export function ProxyBrowser() {
         extensions={extensions}
         onChanged={refreshExtensions}
         onOpenPage={(extId, kind) => setExtPage({ extId, kind })}
+      />
+      <SettingsDialog
+        open={settingsOpen}
+        onOpenChange={setSettingsOpen}
+        onProxyChanged={reloadAfterProxyChange}
+        notify={notify}
       />
       <Toaster position="bottom-right" />
     </div>

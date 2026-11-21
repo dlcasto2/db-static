@@ -3,11 +3,19 @@
 // db-v2 proxies pages through its own server (/api/proxy). This repo has no
 // server, so pages load through Ultraviolet instead, which runs entirely in the
 // browser: a service worker (public/uv/sw.js) rewrites each page and forwards
-// its requests, over a bare-mux SharedWorker, to an Epoxy transport that
-// tunnels them as raw TCP streams through a Wisp server — the one piece that
-// has to live somewhere else, since GitHub Pages can't host a WebSocket
-// server. TLS for https:// sites happens here in the browser (Epoxy), so the
-// Wisp server relays encrypted bytes and never sees those pages' contents.
+// its requests, over a bare-mux SharedWorker, to a transport that reaches the
+// internet through a proxy server somewhere else — GitHub Pages can't host one.
+// Two kinds work:
+//
+// - Wisp (wss://…), through the Epoxy transport: raw TCP streams over a
+//   WebSocket. TLS for https:// sites happens here in the browser, so the Wisp
+//   server relays encrypted bytes and never sees those pages' contents.
+// - Bare (https://…/bare/), through the Bare transport: the older protocol
+//   Abyss-Web's server speaks, so any Abyss deployment works as a backend.
+//   The Bare server makes the requests itself, so it does see the pages.
+//
+// server/index.mjs runs both. When Devon is served by that server, it says so
+// at /devon-backend.json and Devon uses it without being told.
 //
 // The service worker is scoped to <base>/uv/service/, so Devon's own pages
 // are never touched by it; a proxied page is just an iframe pointed at
@@ -19,46 +27,103 @@ import { withBasePath } from "@/lib/base-path"
 export const UV_PREFIX = withBasePath("/uv/service/")
 const SW_URL = withBasePath("/uv/sw.js")
 const BAREMUX_WORKER = withBasePath("/baremux/worker.js")
-const TRANSPORT = withBasePath("/epoxy/index.js")
+const EPOXY_TRANSPORT = withBasePath("/epoxy/index.js")
+const BARE_TRANSPORT = withBasePath("/baremod/index.js")
 
 /**
  * Mercury Workshop's public demo Wisp server. It's throttled, so it's a
- * fallback that works out of the box — point Devon at your own server (menu →
- * Proxy server) for real use.
+ * fallback that works out of the box — point Devon at your own server
+ * (Settings → Proxy server) for real use.
  */
-export const DEFAULT_WISP_SERVER = "wss://wisp.mercurywork.shop/"
-const WISP_STORAGE_KEY = "devon-wisp-server"
+export const DEFAULT_PROXY_SERVER = "wss://wisp.mercurywork.shop/"
+const STORAGE_KEY = "devon-proxy-server"
+/** What the first version of this setting was saved under (Wisp only) */
+const LEGACY_STORAGE_KEY = "devon-wisp-server"
 
-export function isValidWispUrl(value: string): boolean {
+export type ProxyKind = "wisp" | "bare"
+
+/** wss:// and ws:// are Wisp servers, https:// and http:// Bare servers; anything else is null */
+export function proxyKind(value: string): ProxyKind | null {
   try {
-    const url = new URL(value)
-    return url.protocol === "wss:" || url.protocol === "ws:"
+    const { protocol } = new URL(value)
+    if (protocol === "wss:" || protocol === "ws:") return "wisp"
+    if (protocol === "https:" || protocol === "http:") return "bare"
   } catch {
-    return false
+    // not a URL
   }
+  return null
 }
 
-export function getWispServer(): string {
+/** Why `value` can't be used as a proxy server, or null if it can */
+export function proxyServerProblem(value: string): string | null {
+  const kind = proxyKind(value)
+  if (!kind) return "Enter a Wisp server (wss://…) or a Bare server (https://…/bare/)"
+  const { protocol, hostname } = new URL(value)
+  const local = hostname === "localhost" || hostname === "127.0.0.1" || hostname === "[::1]"
+  // An https page can't open ws:// or fetch http:// (mixed content)
+  if (typeof location !== "undefined" && location.protocol === "https:" && !local && (protocol === "ws:" || protocol === "http:")) {
+    return `Devon is on https, so the server has to be ${kind === "wisp" ? "wss://" : "https://"} too`
+  }
+  return null
+}
+
+/** The server the person chose, or null for automatic */
+export function getSavedProxyServer(): string | null {
   try {
-    const saved = localStorage.getItem(WISP_STORAGE_KEY)
-    if (saved && isValidWispUrl(saved)) return saved
+    const saved = localStorage.getItem(STORAGE_KEY) ?? localStorage.getItem(LEGACY_STORAGE_KEY)
+    if (saved && proxyKind(saved)) return saved
   } catch {
     // storage blocked
   }
-  return DEFAULT_WISP_SERVER
+  return null
 }
 
-/** Saves the Wisp server (null = back to the default) and switches to it. Throws on an invalid URL. */
-export async function setWispServer(value: string | null): Promise<void> {
+/** This site's own backend (server/index.mjs), when Devon is served by it */
+let detectedBackend: string | null = null
+
+export function getDetectedBackend(): string | null {
+  return detectedBackend
+}
+
+/** The server Devon proxies through: the chosen one, else this site's own backend, else the public demo */
+export function getProxyServer(): string {
+  return getSavedProxyServer() ?? detectedBackend ?? DEFAULT_PROXY_SERVER
+}
+
+/** Saves the proxy server (null or empty = automatic) and switches to it. Throws if it can't be used. */
+export async function setProxyServer(value: string | null): Promise<void> {
   const next = value?.trim() || null
-  if (next && !isValidWispUrl(next)) throw new Error("A Wisp server address starts with wss:// (or ws://)")
+  const problem = next ? proxyServerProblem(next) : null
+  if (problem) throw new Error(problem)
   try {
-    if (next && next !== DEFAULT_WISP_SERVER) localStorage.setItem(WISP_STORAGE_KEY, next)
-    else localStorage.removeItem(WISP_STORAGE_KEY)
+    localStorage.removeItem(LEGACY_STORAGE_KEY)
+    if (next) localStorage.setItem(STORAGE_KEY, next)
+    else localStorage.removeItem(STORAGE_KEY)
   } catch {
     // storage blocked: still switch for this visit
   }
-  if (connection) await connection.setTransport(TRANSPORT, [{ wisp: getWispServer() }])
+  if (connection) await useTransport(connection)
+}
+
+async function detectBackend(): Promise<void> {
+  try {
+    const res = await fetch("/devon-backend.json", { cache: "no-store", signal: AbortSignal.timeout(2500) })
+    if (!res.ok) return
+    const info = (await res.json()) as { wisp?: unknown }
+    if (typeof info.wisp !== "string") return
+    const url = new URL(info.wisp, location.origin)
+    url.protocol = url.protocol === "https:" ? "wss:" : "ws:"
+    detectedBackend = url.href
+  } catch {
+    // not served by Devon's backend (GitHub Pages, `pnpm dev`)
+  }
+}
+
+function useTransport(conn: BareMuxConnection): Promise<void> {
+  const server = getProxyServer()
+  return proxyKind(server) === "bare"
+    ? conn.setTransport(BARE_TRANSPORT, [server])
+    : conn.setTransport(EPOXY_TRANSPORT, [{ wisp: server }])
 }
 
 // Ultraviolet's "xor" codec (Ultraviolet.codec.xor), the one uv.config.js
@@ -142,14 +207,17 @@ async function start(): Promise<void> {
   // navigator.serviceWorker.ready never resolves here — it waits for a worker
   // controlling *this* page, and this one deliberately doesn't — so wait on
   // the registration itself.
-  const registration = await navigator.serviceWorker.register(SW_URL, { scope: UV_PREFIX, updateViaCache: "none" })
+  const [registration] = await Promise.all([
+    navigator.serviceWorker.register(SW_URL, { scope: UV_PREFIX, updateViaCache: "none" }),
+    detectBackend(),
+  ])
   await activated(registration)
   // Also answers the service worker when it asks the page for a port to the
   // bare-mux worker, so this connection has to stay alive for the visit.
   // Loaded on first use: it touches browser-only globals as soon as it's imported
   const { BareMuxConnection } = await import("@mercuryworkshop/bare-mux")
   connection = new BareMuxConnection(BAREMUX_WORKER)
-  await connection.setTransport(TRANSPORT, [{ wisp: getWispServer() }])
+  await useTransport(connection)
 }
 
 /** Starts the proxy once per visit; every navigation awaits this first. */

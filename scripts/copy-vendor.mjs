@@ -66,6 +66,14 @@ try {
   mkdirSync(epoxyOut, { recursive: true })
   copyFileSync(join(epoxyDist, "index.mjs"), join(epoxyOut, "index.js"))
   console.log("copy-vendor: @mercuryworkshop/epoxy-transport -> public/epoxy/")
+
+  // The Bare transport, for Bare servers like Abyss-Web's /bare/ (and
+  // server/index.mjs's): same reason for the .js name as Epoxy above.
+  const bareModDist = join(pkgDir("@mercuryworkshop/bare-as-module3"), "dist")
+  const bareModOut = join(root, "public", "baremod")
+  mkdirSync(bareModOut, { recursive: true })
+  copyFileSync(join(bareModDist, "index.mjs"), join(bareModOut, "index.js"))
+  console.log("copy-vendor: @mercuryworkshop/bare-as-module3 -> public/baremod/")
 } catch (error) {
   console.warn("copy-vendor: Ultraviolet files not installed, skipping", error.message)
 }

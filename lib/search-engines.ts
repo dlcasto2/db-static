@@ -55,6 +55,43 @@ export const SEARCH_ENGINES: SearchEngine[] = [
 /** Used when nothing has been probed yet, and if every engine refuses */
 export const DEFAULT_ENGINE: SearchEngine = SEARCH_ENGINES[0]
 
+/**
+ * Every engine the person can choose in Settings (ported from Abyss-Web's
+ * search engine picker). db-static has no server to probe with, so a choice
+ * here is used as-is; Google isn't in the probe list above because it refuses
+ * datacenter addresses outright, but through Ultraviolet it's the visitor's
+ * own request (or the proxy server's), which it may well answer.
+ */
+export const CHOOSABLE_ENGINES: SearchEngine[] = [
+  {
+    id: "google",
+    name: "Google",
+    url: (q) => `https://www.google.com/search?q=${encodeURIComponent(q)}`,
+  },
+  ...SEARCH_ENGINES,
+]
+
+const ENGINE_PREF_KEY = "devon-search-engine"
+
+/** The engine chosen in Settings, or undefined for automatic */
+export function readEnginePref(): SearchEngine | undefined {
+  try {
+    const id = localStorage.getItem(ENGINE_PREF_KEY)
+    return id ? CHOOSABLE_ENGINES.find((e) => e.id === id) : undefined
+  } catch {
+    return undefined
+  }
+}
+
+export function writeEnginePref(id: string | null) {
+  try {
+    if (id && CHOOSABLE_ENGINES.some((e) => e.id === id)) localStorage.setItem(ENGINE_PREF_KEY, id)
+    else localStorage.removeItem(ENGINE_PREF_KEY)
+  } catch {
+    // storage blocked
+  }
+}
+
 export function engineById(id: string | null | undefined): SearchEngine | undefined {
   return id ? SEARCH_ENGINES.find((e) => e.id === id) : undefined
 }

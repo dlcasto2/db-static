@@ -1,0 +1,7 @@
+# The image installs its own dependencies (see server/Dockerfile), so the
+# committed node_modules and any local build output stay out of the context.
+.git
+node_modules
+server/node_modules
+.next
+out

@@ -19,6 +19,7 @@ public/uv/*.map
 !public/uv/uv.config.js
 public/baremux/
 public/epoxy/
+public/baremod/
 # The one piece of node_modules NOT committed, despite the rest of it being
 # tracked above: GitHub hard-rejects any single git object over 100 MB, and
 # this native binary (Next's Rust-based compiler, @next/swc) is ~125 MB on
@@ -28,3 +29,6 @@ public/epoxy/
 # Pages workflow does this anyway. The pattern covers the musl build too:
 # pnpm sometimes installs it alongside the glibc one despite .npmrc.
 node_modules/.pnpm/@next+swc-*/node_modules/@next/swc-*/*.node
+# The proxy backend (server/) installs its own dependencies with npm; only its
+# package-lock.json is committed.
+server/node_modules/

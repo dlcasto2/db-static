@@ -15,13 +15,16 @@ What that leaves:
 - The browser UI shell (tabs, address bar, bookmarks, history, new-tab page).
 - Browsing, through [Ultraviolet](https://github.com/titaniumnetwork-dev/Ultraviolet)
   instead of db-v2's server proxy (see below).
+- Settings (⋮ → Settings): the proxy server, plus features ported from
+  [Abyss-Web](https://github.com/AbyssServices/Abyss-Web) — tab cloak,
+  about:blank cloak, panic key, themes and a search engine picker (see below).
 - `/games`.
 - `/youtube` — the page renders, but downloading doesn't work (that needs
   the server route this repo doesn't have).
 
 What doesn't work here: YouTube downloads, page-safety checks, Devon AI,
 sign-in/sync, and the extras that hook into db-v2's server-rewritten pages
-(extensions/userscripts, dev tools, saving pages, "ask about this page"). For
+(extensions/userscripts, saving pages, "ask about this page"). For
 the real thing, see [dlcasto2/db-v2](https://github.com/dlcasto2/db-v2).
 
 ## Browsing: Ultraviolet
@@ -35,19 +38,21 @@ Ultraviolet, which proxies in the browser itself:
   it loads. `lib/uv.ts` registers it, and `components/proxy-browser.tsx` reads
   each page's real address and title back out of the frame for the address
   bar, tab and history.
-- [bare-mux](https://github.com/MercuryWorkshop/bare-mux) + the
-  [Epoxy](https://github.com/MercuryWorkshop/epoxy-tls) transport carry the
-  requests. Epoxy does TLS in the browser and tunnels raw TCP through a
-  **Wisp server** — the one part that can't live on GitHub Pages, since it's a
-  WebSocket server.
+- [bare-mux](https://github.com/MercuryWorkshop/bare-mux) carries the
+  requests to a **proxy server** — the one part that can't live on GitHub
+  Pages. Two kinds work, set under ⋮ → Settings → Proxy server:
+  - a **Wisp** server (`wss://…`), through the
+    [Epoxy](https://github.com/MercuryWorkshop/epoxy-tls) transport, which
+    does TLS in the browser so the server only relays encrypted traffic;
+  - a **Bare** server (`https://…/bare/`), through
+    [bare-as-module3](https://github.com/MercuryWorkshop/bare-as-module3) —
+    the protocol Abyss-Web's server speaks, so any Abyss deployment works.
 
-The Wisp server defaults to Mercury Workshop's public demo,
-`wss://wisp.mercurywork.shop/`, which is rate-limited. Point Devon at your own
-from the ⋮ menu → **Proxy server…** (saved per browser). Any Wisp server works
-on any host that allows WebSockets, e.g.
-[wisp-js](https://github.com/MercuryWorkshop/wisp-js) (`npx wisp-js-server`).
+With nothing set, Devon uses its own backend when it's served by one (see
+below), and otherwise Mercury Workshop's public demo Wisp server,
+`wss://wisp.mercurywork.shop/`, which is rate-limited.
 
-Ultraviolet's prebuilt scripts, the bare-mux worker and the Epoxy transport are
+Ultraviolet's prebuilt scripts, the bare-mux worker and both transports are
 copied out of `node_modules` into `public/` by `scripts/copy-vendor.mjs` on
 every install (and gitignored); `public/uv/sw.js` and `public/uv/uv.config.js`
 are the hand-written parts. `uv.config.js` works out the base path from its own
@@ -56,6 +61,57 @@ URL, so the same files work at `/db-static/` and at the root in `pnpm dev`.
 Ultraviolet and the Epoxy transport are AGPL-3.0 (per their LICENSE files);
 this repo being public keeps the source of what it serves available, as that
 license asks.
+
+## The proxy backend (`server/`)
+
+Abyss-Web's server, ported: a Node server with the same Bare server at
+`/bare/`, plus a Wisp server at `/wisp/`. It refuses private and loopback
+addresses, so it can't be used to reach the host's own network. Run it
+anywhere that allows WebSockets and either address works as Devon's proxy
+server:
+
+```
+cd server && npm ci && npm start      # PORT defaults to 8080
+```
+
+If Devon has been built (`pnpm build` → `out/`), the server also serves it at
+`/db-static/` (and redirects `/` there). Devon then finds the server at
+`/devon-backend.json` and proxies through its Wisp endpoint without being
+told — one deploy, no settings.
+
+`server/Dockerfile` does both in one image (build Devon, then run the server):
+
+```
+docker build -f server/Dockerfile -t devon .
+docker run -p 8080:8080 devon
+```
+
+`render.yaml` deploys that image on [Render](https://render.com) (its free plan
+supports WebSockets) — create a Blueprint from this repo. Vercel can't host it:
+it has no WebSockets for the Wisp server.
+
+## Ported from Abyss-Web
+
+Under ⋮ → Settings, saved per browser:
+
+- **Tab cloak** — Abyss's presets (Google Classroom, Drive, Docs, Google,
+  Schoology, Mathspace, Khan Academy, IXL) or any title and icon
+  (`lib/cloak.ts`).
+- **about:blank** — opens Devon inside an about:blank tab, so its address
+  never shows in the address bar or history, and sends the original tab to the
+  panic URL. Can reopen that way on every visit; browsers only allow that
+  pop-up after a click, so Devon offers a button when it's blocked.
+- **Panic key** — any key or keys pressed within a second of each other,
+  including while a proxied page has focus, send the whole tab to the panic
+  URL.
+- **Themes** — Abyss's Black, Grey, Mocha, Macchiato, Frappé and Cappuccino,
+  each mixed into Devon's surfaces (`lib/themes.ts`, `app/globals.css`).
+- **Search engine** — Google, DuckDuckGo, Mojeek, Ecosia, Brave or Bing.
+- **Inspect element** — Devon's developer tools (Eruda) now work on proxied
+  pages too.
+
+Not ported: Abyss's apps/games list, particles background, ads, and its
+second proxy (Dynamic, which is unmaintained).
 
 ## node_modules is committed
 

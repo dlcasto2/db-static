@@ -1,4 +1,4 @@
-import { DEFAULT_ENGINE } from "@/lib/search-engines"
+import { DEFAULT_ENGINE, readEnginePref } from "@/lib/search-engines"
 
 export interface ProxyResponse {
   /** HTML (already rewritten by the proxy) to render via srcDoc */
@@ -158,6 +158,9 @@ export function isSearchInput(input: string): boolean {
  * engine stands in, which is no worse than not asking at all.
  */
 export async function resolveSearchUrl(query: string, signal?: AbortSignal): Promise<string> {
+  // An engine chosen in Settings wins
+  const chosen = readEnginePref()
+  if (chosen) return chosen.url(query)
   try {
     const res = await fetch(`/api/search?q=${encodeURIComponent(query)}`, { signal, cache: "no-store" })
     if (res.ok) {

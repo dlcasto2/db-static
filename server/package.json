@@ -1,0 +1,21 @@
+{
+  "name": "devon-proxy-backend",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Devon's Ultraviolet backend: a Bare server (/bare/) and a Wisp server (/wisp/), ported from Abyss-Web",
+  "type": "module",
+  "main": "index.mjs",
+  "engines": {
+    "node": ">=20"
+  },
+  "scripts": {
+    "start": "node index.mjs"
+  },
+  "license": "AGPL-3.0-only",
+  "dependencies": {
+    "@mercuryworkshop/wisp-js": "0.5.3",
+    "@tomphttp/bare-server-node": "2.0.6",
+    "compression": "^1.8.1",
+    "express": "^4.21.2"
+  }
+}
