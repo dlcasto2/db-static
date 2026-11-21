@@ -8,6 +8,7 @@
     "dev": "next dev",
     "lint": "next lint",
     "start": "next start",
+    "test:uv": "node scripts/check-uv-rewriter.mjs",
     "postinstall": "node scripts/copy-vendor.mjs"
   },
   "dependencies": {

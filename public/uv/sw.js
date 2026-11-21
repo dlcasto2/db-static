@@ -7,6 +7,8 @@
 // both at /db-static/uv/sw.js (GitHub Pages) and /uv/sw.js (`pnpm dev`).
 importScripts("uv.bundle.js")
 importScripts("uv.config.js")
+// Same rewritten scripts, sooner: see fast-walk.js
+importScripts("fast-walk.js")
 importScripts(__uv$config.sw)
 
 const uv = new UVServiceWorker()
