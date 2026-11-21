@@ -58,7 +58,16 @@ import {
   type IdentityHandoff,
 } from "@/lib/proxy-utils"
 import { SessionManager, type BookmarkItem, type HistoryItem } from "@/lib/session-manager"
-import { clearUvData, ensureUv, getProxyServer, realUrlFromUv, uvUrl } from "@/lib/uv"
+import {
+  clearUvData,
+  ensureUv,
+  getProxyServer,
+  getWispTransport,
+  proxyKind,
+  proxyServerReachable,
+  realUrlFromUv,
+  uvUrl,
+} from "@/lib/uv"
 import { applyTabCloak, handlePanicKey, isFramed, openAboutBlank, readCloak } from "@/lib/cloak"
 import { SettingsDialog } from "@/components/settings-dialog"
 import {
@@ -201,6 +210,37 @@ function hostnameOf(url: string): string {
   } catch {
     return "Unknown"
   }
+}
+
+function proxyUnreachableMessage(): string {
+  return `Couldn't reach Devon's proxy server (${getProxyServer()}). It may be down or blocked on this network — try another under ⋮ → Settings → Proxy server.`
+}
+
+/** curl's "couldn't connect": either the site or the proxy server is down (see handleUvLoad) */
+const CONNECT_FAILED = /error code 7\b/i
+
+/** Devon's explanation for Ultraviolet's error page, from its error trace and message */
+function describeProxyFailure(trace: string, message: string, url: string): string {
+  const server = getProxyServer()
+  const host = hostnameOf(url)
+  if (/Wisp WebSocket failed|WebSocketConnectFailed|WebSocket (connection )?(failed|closed)/i.test(trace)) {
+    return proxyUnreachableMessage()
+  }
+  // libcurl's errors, by curl error code
+  if (/error code 6\b/i.test(trace)) return `Couldn't find ${host}. Check the address.`
+  if (CONNECT_FAILED.test(trace)) return `Couldn't connect to ${host}. The site may be down, or not accept connections from the proxy server.`
+  // What a Wisp server's failed connection to the site looks like to curl
+  if (/error code 52\b/i.test(trace)) return `${host} didn't answer. The site may be down, or not accept connections from the proxy server.`
+  if (/error code 28\b/i.test(trace)) return `${host} took too long to answer.`
+  if (/error code (35|60)\b/i.test(trace)) return `Couldn't make a secure connection to ${host}: its certificate or encryption wasn't accepted.`
+  if (proxyKind(server) === "wisp" && getWispTransport() === "epoxy" && /http2|PROTOCOL_ERROR/i.test(trace)) {
+    return "This site sends more header data than the Epoxy transport can handle. Switch the transport to libcurl under ⋮ → Settings → Proxy server."
+  }
+  if (/header overflow|HPE_HEADER_OVERFLOW/i.test(trace)) {
+    return "The proxy server couldn't read this site's response: its headers are bigger than the server allows. A Wisp server (wss://…) with the libcurl transport doesn't have this limit."
+  }
+  const detail = message && !/^internal server error$/i.test(message) ? message : trace.split("\n")[0]
+  return `The proxy couldn't load this page: ${detail.slice(0, 200)}`
 }
 
 /** A site's icon. Fetched straight from Google: the proxy only serves pages inside its frame. */
@@ -1183,14 +1223,17 @@ export function ProxyBrowser() {
       return
     }
 
-    // Ultraviolet's own error page, when the Wisp server can't be reached:
-    // nothing will load until that changes, so say so in Devon's words
+    // Ultraviolet's own error page: shown as Devon's, in Devon's words
     let failure = ""
+    let failureMessage = ""
     try {
       const doc = win.document
       // Its script fills the trace box in before the load event
       const trace = (doc.getElementById("errorTrace") as HTMLTextAreaElement | null)?.value ?? ""
-      if (doc.getElementById("errorTitle") && /Wisp WebSocket failed|WebSocketConnectFailed/i.test(trace)) failure = trace.trim()
+      if (doc.getElementById("errorTitle") && trace) {
+        failure = trace.trim()
+        failureMessage = doc.getElementById("errorMessage")?.textContent?.trim() ?? ""
+      }
     } catch {
       failure = ""
     }
@@ -1205,13 +1248,26 @@ export function ProxyBrowser() {
                 isLoading: false,
                 uv: undefined,
                 uvLoaded: undefined,
-                error: `Couldn't reach Devon's proxy server (${getProxyServer()}). It may be down or blocked on this network — try another under ⋮ → Settings → Proxy server.`,
+                error: describeProxyFailure(failure, failureMessage, url),
                 errorDetails: failure,
                 isSecure: false,
               }
             : tab,
         ),
       )
+      // Was it the site or the proxy server that didn't answer?
+      if (CONNECT_FAILED.test(failure)) {
+        void proxyServerReachable().then((reachable) => {
+          if (reachable) return
+          setTabs((prev) =>
+            prev.map((tab) =>
+              tab.id === tabId && tab.loadId === loadId && tab.errorDetails === failure
+                ? { ...tab, error: proxyUnreachableMessage() }
+                : tab,
+            ),
+          )
+        })
+      }
       return
     }
 

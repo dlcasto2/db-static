@@ -20,6 +20,7 @@ public/uv/*.map
 public/baremux/
 public/epoxy/
 public/baremod/
+public/libcurl/
 # The one piece of node_modules NOT committed, despite the rest of it being
 # tracked above: GitHub hard-rejects any single git object over 100 MB, and
 # this native binary (Next's Rust-based compiler, @next/swc) is ~125 MB on

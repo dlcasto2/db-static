@@ -41,9 +41,17 @@ Ultraviolet, which proxies in the browser itself:
 - [bare-mux](https://github.com/MercuryWorkshop/bare-mux) carries the
   requests to a **proxy server** — the one part that can't live on GitHub
   Pages. Two kinds work, set under ⋮ → Settings → Proxy server:
-  - a **Wisp** server (`wss://…`), through the
-    [Epoxy](https://github.com/MercuryWorkshop/epoxy-tls) transport, which
-    does TLS in the browser so the server only relays encrypted traffic;
+  - a **Wisp** server (`wss://…`), which only relays encrypted traffic: TLS
+    happens in the browser. Two transports speak it, picked under the same
+    setting:
+    - [libcurl.js](https://github.com/ading2210/libcurl.js) — real curl,
+      compiled to WebAssembly — the default, through Devon's own small
+      transport, `public/transports/libcurl.js`;
+    - [Epoxy](https://github.com/MercuryWorkshop/epoxy-tls), Ultraviolet's
+      usual one. Its HTTP/2 client keeps hyper's 16 KB cap on response
+      headers, with no option to raise it, so sites that send more — YouTube
+      does — fail with `Reset(StreamId(n), PROTOCOL_ERROR, Library)`. That's
+      why it isn't the default.
   - a **Bare** server (`https://…/bare/`), through
     [bare-as-module3](https://github.com/MercuryWorkshop/bare-as-module3) —
     the protocol Abyss-Web's server speaks, so any Abyss deployment works.
@@ -52,13 +60,18 @@ With nothing set, Devon uses its own backend when it's served by one (see
 below), and otherwise Mercury Workshop's public demo Wisp server,
 `wss://wisp.mercurywork.shop/`, which is rate-limited.
 
-Ultraviolet's prebuilt scripts, the bare-mux worker and both transports are
+Ultraviolet's prebuilt scripts, the bare-mux worker, Epoxy, the Bare transport
+and libcurl.js are
 copied out of `node_modules` into `public/` by `scripts/copy-vendor.mjs` on
 every install (and gitignored); `public/uv/sw.js` and `public/uv/uv.config.js`
 are the hand-written parts. `uv.config.js` works out the base path from its own
 URL, so the same files work at `/db-static/` and at the root in `pnpm dev`.
 
-Ultraviolet and the Epoxy transport are AGPL-3.0 (per their LICENSE files);
+When a page can't load, Devon replaces Ultraviolet's error page with its own,
+and says whether the site or the proxy server is the one not answering.
+
+Ultraviolet and the Epoxy transport are AGPL-3.0 (per their LICENSE files),
+libcurl.js LGPL-3.0;
 this repo being public keeps the source of what it serves available, as that
 license asks.
 
@@ -73,6 +86,12 @@ server:
 ```
 cd server && npm ci && npm start      # PORT defaults to 8080
 ```
+
+Start it with `npm start` (or the Dockerfile), not bare `node index.mjs`: both
+add `--max-http-header-size=262144`. Node reads only 16 KB of response
+headers by default, so the Bare server would fail on big sites with
+`Header overflow` — the same limit that trips Epoxy, and one that other Bare
+servers, Abyss deployments included, usually still have.
 
 If Devon has been built (`pnpm build` → `out/`), the server also serves it at
 `/db-static/` (and redirects `/` there). Devon then finds the server at

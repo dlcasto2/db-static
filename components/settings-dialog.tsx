@@ -29,9 +29,12 @@ import {
   getDetectedBackend,
   getProxyServer,
   getSavedProxyServer,
+  getWispTransport,
   proxyKind,
   proxyServerProblem,
   setProxyServer,
+  setWispTransport,
+  type WispTransport,
 } from "@/lib/uv"
 import { cn } from "@/lib/utils"
 
@@ -64,6 +67,7 @@ function Section({ icon, title, children, hint }: { icon: React.ReactNode; title
 
 export function SettingsDialog({ open, onOpenChange, onProxyChanged, notify }: SettingsDialogProps) {
   const [proxyInput, setProxyInput] = useState("")
+  const [transport, setTransport] = useState<WispTransport>("libcurl")
   const [engine, setEngine] = useState("auto")
   const [theme, setTheme] = useState("devon")
   const [cloak, setCloak] = useState<CloakSettings>(() => readCloak())
@@ -78,6 +82,7 @@ export function SettingsDialog({ open, onOpenChange, onProxyChanged, notify }: S
     const c = readCloak()
     setCloak(c)
     setProxyInput(getSavedProxyServer() ?? "")
+    setTransport(getWispTransport())
     setEngine(readEnginePref()?.id ?? "auto")
     setTheme(readTheme())
     setTitleInput(c.title ?? "")
@@ -115,6 +120,17 @@ export function SettingsDialog({ open, onOpenChange, onProxyChanged, notify }: S
       await setProxyServer(value)
       setProxyInput(value?.trim() ?? "")
       notify(`Proxy server: ${getProxyServer()}`, "success")
+      onProxyChanged()
+    } catch (error) {
+      notify(error instanceof Error ? error.message : String(error), "error")
+    }
+  }
+
+  const changeTransport = async (next: WispTransport) => {
+    setTransport(next)
+    try {
+      await setWispTransport(next)
+      notify(next === "epoxy" ? "Transport: Epoxy" : "Transport: libcurl", "success")
       onProxyChanged()
     } catch (error) {
       notify(error instanceof Error ? error.message : String(error), "error")
@@ -216,6 +232,25 @@ export function SettingsDialog({ open, onOpenChange, onProxyChanged, notify }: S
                 </button>
               )}
             </p>
+            {proxyKind(getProxyServer()) === "wisp" && (
+              <div className="flex flex-wrap items-center gap-x-3 gap-y-1.5">
+                <span className="text-sm">Transport</span>
+                <Select value={transport} onValueChange={(value) => void changeTransport(value as WispTransport)}>
+                  <SelectTrigger className="h-8 min-w-40 flex-1 rounded-full bg-omnibox">
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="libcurl">libcurl (recommended)</SelectItem>
+                    <SelectItem value="epoxy">Epoxy</SelectItem>
+                  </SelectContent>
+                </Select>
+                {transport === "epoxy" && (
+                  <p className="w-full text-xs text-muted-foreground">
+                    Epoxy can&apos;t open sites that send very large headers over HTTP/2, like YouTube.
+                  </p>
+                )}
+              </div>
+            )}
           </Section>
 
           <Section icon={<Search />} title="Search engine">

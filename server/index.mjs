@@ -11,6 +11,10 @@
 //
 // Env: PORT (default 8080). DEVON_ALLOW_LOCAL=1 lets the proxy reach private
 // and loopback addresses — for local testing only, never on a public host.
+//
+// Start it with `npm start` (or the Dockerfile), which also passes
+// --max-http-header-size: Node reads at most 16 KB of response headers by
+// default, and the Bare server fails on sites that send more, like YouTube.
 import { createBareServer } from "@tomphttp/bare-server-node"
 import { server as wisp, logging } from "@mercuryworkshop/wisp-js/server"
 import compression from "compression"
@@ -92,6 +96,11 @@ server.on("listening", () => {
   console.log(`\thttp://${hostname()}:${listening}`)
   console.log(`\tBare: /bare/  Wisp: /wisp/${hasSite ? "" : "  (no Devon build found in out/)"}`)
   if (allowLocal) console.warn("DEVON_ALLOW_LOCAL=1: the proxy can reach private addresses. Testing only.")
+  if (http.maxHeaderSize < 65536) {
+    console.warn(
+      `Node only reads ${http.maxHeaderSize} bytes of headers: big sites will fail through /bare/. Start with \`npm start\` or node --max-http-header-size=262144.`,
+    )
+  }
 })
 
 function shutdown() {

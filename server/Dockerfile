@@ -18,4 +18,6 @@ COPY server/index.mjs ./server/
 COPY --from=build /app/out ./out
 ENV PORT=8080
 EXPOSE 8080
-CMD ["node", "server/index.mjs"]
+# Node reads at most 16 KB of response headers by default; YouTube and other
+# big sites send more, which the Bare server would fail on ("Header overflow")
+CMD ["node", "--max-http-header-size=262144", "server/index.mjs"]

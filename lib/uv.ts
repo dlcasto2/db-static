@@ -7,9 +7,11 @@
 // internet through a proxy server somewhere else — GitHub Pages can't host one.
 // Two kinds work:
 //
-// - Wisp (wss://…), through the Epoxy transport: raw TCP streams over a
-//   WebSocket. TLS for https:// sites happens here in the browser, so the Wisp
-//   server relays encrypted bytes and never sees those pages' contents.
+// - Wisp (wss://…): raw TCP streams over a WebSocket. TLS for https:// sites
+//   happens here in the browser, so the Wisp server relays encrypted bytes and
+//   never sees those pages' contents. Two transports speak it: libcurl.js
+//   (public/transports/libcurl.js, the default) and Epoxy, which can't open
+//   HTTP/2 sites whose response headers pass 16 KB — YouTube among them.
 // - Bare (https://…/bare/), through the Bare transport: the older protocol
 //   Abyss-Web's server speaks, so any Abyss deployment works as a backend.
 //   The Bare server makes the requests itself, so it does see the pages.
@@ -27,8 +29,33 @@ import { withBasePath } from "@/lib/base-path"
 export const UV_PREFIX = withBasePath("/uv/service/")
 const SW_URL = withBasePath("/uv/sw.js")
 const BAREMUX_WORKER = withBasePath("/baremux/worker.js")
+const LIBCURL_TRANSPORT = withBasePath("/transports/libcurl.js")
 const EPOXY_TRANSPORT = withBasePath("/epoxy/index.js")
 const BARE_TRANSPORT = withBasePath("/baremod/index.js")
+
+/** What carries the traffic to a Wisp server */
+export type WispTransport = "libcurl" | "epoxy"
+const TRANSPORT_KEY = "devon-wisp-transport"
+
+export function getWispTransport(): WispTransport {
+  try {
+    if (localStorage.getItem(TRANSPORT_KEY) === "epoxy") return "epoxy"
+  } catch {
+    // storage blocked
+  }
+  return "libcurl"
+}
+
+/** Saves the Wisp transport and switches to it */
+export async function setWispTransport(transport: WispTransport): Promise<void> {
+  try {
+    if (transport === "epoxy") localStorage.setItem(TRANSPORT_KEY, "epoxy")
+    else localStorage.removeItem(TRANSPORT_KEY)
+  } catch {
+    // storage blocked: still switch for this visit
+  }
+  if (connection) await useTransport(connection)
+}
 
 /**
  * Mercury Workshop's public demo Wisp server. It's throttled, so it's a
@@ -123,7 +150,45 @@ function useTransport(conn: BareMuxConnection): Promise<void> {
   const server = getProxyServer()
   return proxyKind(server) === "bare"
     ? conn.setTransport(BARE_TRANSPORT, [server])
-    : conn.setTransport(EPOXY_TRANSPORT, [{ wisp: server }])
+    : conn.setTransport(getWispTransport() === "epoxy" ? EPOXY_TRANSPORT : LIBCURL_TRANSPORT, [{ wisp: server }])
+}
+
+/**
+ * Whether the proxy server answers at all: a Wisp server accepts a
+ * WebSocket, a Bare server answers a request. Used to tell "the site is down"
+ * from "the proxy is down" when a load fails to connect.
+ */
+export function proxyServerReachable(timeoutMs = 5000): Promise<boolean> {
+  const server = getProxyServer()
+  if (proxyKind(server) === "bare") {
+    return fetch(server, { cache: "no-store", signal: AbortSignal.timeout(timeoutMs) }).then(
+      () => true,
+      () => false,
+    )
+  }
+  return new Promise((resolve) => {
+    let socket: WebSocket
+    try {
+      socket = new WebSocket(server)
+    } catch {
+      resolve(false)
+      return
+    }
+    const finish = (ok: boolean) => {
+      clearTimeout(timer)
+      socket.onopen = socket.onerror = socket.onclose = null
+      try {
+        socket.close()
+      } catch {
+        // already closed
+      }
+      resolve(ok)
+    }
+    const timer = setTimeout(() => finish(false), timeoutMs)
+    socket.onopen = () => finish(true)
+    socket.onerror = () => finish(false)
+    socket.onclose = () => finish(false)
+  })
 }
 
 // Ultraviolet's "xor" codec (Ultraviolet.codec.xor), the one uv.config.js

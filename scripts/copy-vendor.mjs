@@ -74,6 +74,17 @@ try {
   mkdirSync(bareModOut, { recursive: true })
   copyFileSync(join(bareModDist, "index.mjs"), join(bareModOut, "index.js"))
   console.log("copy-vendor: @mercuryworkshop/bare-as-module3 -> public/baremod/")
+
+  // libcurl.js — curl compiled to WebAssembly — for Devon's default Wisp
+  // transport (public/transports/libcurl.js, hand-written). The ES module
+  // build is saved as .js for the same reason as Epoxy; its WebAssembly is
+  // loaded separately, next to it.
+  const libcurlDir = pkgDir("libcurl.js")
+  const libcurlOut = join(root, "public", "libcurl")
+  mkdirSync(libcurlOut, { recursive: true })
+  copyFileSync(join(libcurlDir, "libcurl.mjs"), join(libcurlOut, "libcurl.js"))
+  copyFileSync(join(libcurlDir, "libcurl.wasm"), join(libcurlOut, "libcurl.wasm"))
+  console.log("copy-vendor: libcurl.js -> public/libcurl/")
 } catch (error) {
   console.warn("copy-vendor: Ultraviolet files not installed, skipping", error.message)
 }
